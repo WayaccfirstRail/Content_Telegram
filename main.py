@@ -465,6 +465,79 @@ def add_teaser(file_path, file_type, description):
     conn.commit()
     conn.close()
 
+# VIP Content Management Functions
+
+def get_vip_content_count():
+    """Get count of VIP-only content"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM content_items WHERE content_type = ?', ('vip',))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_vip_content_list():
+    """Get all VIP-only content with details"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT name, price_stars, file_path, description, created_date
+        FROM content_items 
+        WHERE content_type = ? 
+        ORDER BY created_date DESC
+    ''', ('vip',))
+    vip_content = cursor.fetchall()
+    conn.close()
+    return vip_content
+
+def add_vip_content(name, price_stars, file_path, description):
+    """Add new VIP-only content"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO content_items (name, price_stars, file_path, description, created_date, content_type)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (name, price_stars, file_path, description, datetime.datetime.now().isoformat(), 'vip'))
+    conn.commit()
+    conn.close()
+
+def update_vip_content(name, price_stars, file_path, description):
+    """Update existing VIP content"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE content_items 
+        SET price_stars = ?, file_path = ?, description = ?
+        WHERE name = ? AND content_type = ?
+    ''', (price_stars, file_path, description, name, 'vip'))
+    updated_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return updated_count > 0
+
+def delete_vip_content(name):
+    """Delete VIP content by name"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM content_items WHERE name = ? AND content_type = ?', (name, 'vip'))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0
+
+def get_vip_content_by_name(name):
+    """Get specific VIP content by name"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT name, price_stars, file_path, description, created_date
+        FROM content_items 
+        WHERE name = ? AND content_type = ?
+    ''', (name, 'vip'))
+    content = cursor.fetchone()
+    conn.close()
+    return content
+
 # VIP Management Functions
 
 def check_vip_status(user_id):
@@ -1645,6 +1718,54 @@ def owner_set_response(message):
     
     bot.send_message(message.chat.id, f"✅ AI response for '{key}' updated successfully!")
 
+@bot.message_handler(commands=['vip'])
+def vip_command(message):
+    """Handle /vip command - VIP content management interface"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    # Get VIP content statistics
+    vip_count = get_vip_content_count()
+    vip_content_list = get_vip_content_list()
+    
+    # Calculate total value of VIP content
+    total_value = sum(content[1] for content in vip_content_list)  # price_stars is index 1
+    
+    vip_text = f"""
+💎 <b>VIP CONTENT MANAGEMENT</b> 💎
+
+📊 <b>VIP Content Overview:</b>
+• Total VIP Content: {vip_count} items
+• Combined Value: {total_value} Stars
+• VIP Exclusive Library Status: {'Active' if vip_count > 0 else 'Empty'}
+
+🎯 <b>VIP Content Features:</b>
+• Exclusive access for VIP members only
+• Free for all VIP subscribers
+• Premium pricing for non-VIP users
+• Special VIP-only catalog section
+
+💡 <b>Management Options:</b>
+Use the buttons below to manage your VIP content library.
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Main VIP management button with count
+    markup.add(types.InlineKeyboardButton(f"💎 VIP Mng ({vip_count})", callback_data="vip_mng"))
+    
+    # Management options
+    markup.add(types.InlineKeyboardButton("➕ Add VIP Content", callback_data="add_vip_content"))
+    if vip_count > 0:
+        markup.add(types.InlineKeyboardButton("✏️ Edit VIP Content", callback_data="edit_vip_content"))
+        markup.add(types.InlineKeyboardButton("🗑️ Delete VIP Content", callback_data="delete_vip_content"))
+    
+    # Navigation
+    markup.add(types.InlineKeyboardButton("🔧 Owner Help", callback_data="owner_help"))
+    
+    bot.send_message(message.chat.id, vip_text, reply_markup=markup, parse_mode='HTML')
+
 @bot.message_handler(commands=['owner_help'])
 def owner_help(message):
     """Handle /owner_help command"""
@@ -1654,6 +1775,12 @@ def owner_help(message):
     
     help_text = """
 🔧 **OWNER COMMANDS** 🔧
+
+💎 **VIP Management (PRIORITY):**
+• `/vip` - VIP content management interface
+• VIP content is exclusive to VIP subscribers
+• VIP members get FREE access to all VIP content
+• Higher revenue potential through VIP subscriptions
 
 📦 **Content Management:**
 • `/owner_upload` - Guided file upload (photos/videos/documents)
@@ -1677,6 +1804,7 @@ def owner_help(message):
 • `/owner_help` - Show this help message
 
 💡 **Tips:**
+- Start with VIP content for premium user experience
 - Upload files directly for automatic Telegram hosting
 - Analytics show only paying customers
 - AI responses support emojis and markdown
@@ -1684,6 +1812,12 @@ def owner_help(message):
 """
     
     markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # VIP Management - Priority section
+    vip_count = get_vip_content_count()
+    markup.add(types.InlineKeyboardButton(f"💎 VIP Management ({vip_count})", callback_data="cmd_vip"))
+    
+    # Content Management
     markup.add(
         types.InlineKeyboardButton("📤 Upload Content", callback_data="start_upload"),
         types.InlineKeyboardButton("🎬 Upload Teaser", callback_data="start_teaser_upload")
