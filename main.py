@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app for Replit hosting
 app = Flask(__name__)
+app.secret_key = os.environ.get('SESSION_SECRET')
 
 # Bot token and owner ID from environment variables
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -1059,8 +1060,9 @@ def main():
     bot_thread.start()
     
     # Start Flask server
-    logger.info("Starting Flask server on 0.0.0.0:5000...")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    logger.info(f"Starting Flask server on 0.0.0.0:{port}...")
+    app.run(host='0.0.0.0', port=port, debug=False)
 
 if __name__ == '__main__':
     main()
