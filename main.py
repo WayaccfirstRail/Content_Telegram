@@ -2103,10 +2103,7 @@ def owner_help(message):
     )
     
     # User Management  
-    markup.add(
-        types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"),
-        types.InlineKeyboardButton("💎 VIP Members", callback_data="owner_list_vips")
-    )
+    markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
 
