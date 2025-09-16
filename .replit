@@ -16,10 +16,10 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Telegram Bot Server"
+args = "Content Bot Server"
 
 [[workflows.workflow]]
-name = "Telegram Bot Server"
+name = "Content Bot Server"
 author = "agent"
 
 [[workflows.workflow.tasks]]
@@ -33,10 +33,6 @@ outputType = "webview"
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 38719
-externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
