@@ -1499,7 +1499,7 @@ After you send the file, I'll ask for the name, price, and description.
     
     bot.send_message(message.chat.id, upload_text, reply_markup=markup, parse_mode='HTML')
 
-@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') not in ['teaser', 'vip_content'])
+@bot.message_handler(content_types=['photo', 'video', 'document', 'animation'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') not in ['teaser', 'vip_content'] and upload_sessions[OWNER_ID].get('step') == 'waiting_for_file')
 def handle_file_upload(message):
     """Handle file uploads for content creation (excludes teaser sessions)"""
     logger.info(f"General content handler triggered - Content type: {message.content_type}, Session: {upload_sessions.get(OWNER_ID, 'None')}")
@@ -1519,6 +1519,9 @@ def handle_file_upload(message):
     elif message.content_type == 'video':
         file_info = bot.get_file(message.video.file_id)
         file_type = "Video"
+    elif message.content_type == 'animation':
+        file_info = bot.get_file(message.animation.file_id)
+        file_type = "GIF"
     elif message.content_type == 'document':
         file_info = bot.get_file(message.document.file_id)
         # Check if document is actually a video or gif
@@ -1551,10 +1554,12 @@ def handle_file_upload(message):
             file_id = message.photo[-1].file_id
         elif message.content_type == 'video':
             file_id = message.video.file_id
+        elif message.content_type == 'animation':
+            file_id = message.animation.file_id
         elif message.content_type == 'document':
             file_id = message.document.file_id
         else:
-            bot.send_message(message.chat.id, "❌ Unsupported file type. Please send a photo, video, or document.")
+            bot.send_message(message.chat.id, "❌ Unsupported file type. Please send a photo, video, animation, or document.")
             return
         
         # Check if this is a VIP upload session
@@ -1786,7 +1791,7 @@ This will be shown to non-VIP users when they use /teaser command.
     
     bot.send_message(message.chat.id, upload_text, reply_markup=markup)
 
-@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser')
+@bot.message_handler(content_types=['photo', 'video', 'document', 'animation'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_file')
 def handle_teaser_upload(message):
     """Handle teaser file upload from owner"""
     logger.info(f"Teaser handler triggered - Content type: {message.content_type}, Session: {upload_sessions.get(OWNER_ID, 'None')}")
@@ -1805,6 +1810,10 @@ def handle_teaser_upload(message):
             file_id = message.video.file_id
             file_type = 'video'
             session['file_type'] = 'video'
+        elif message.animation:
+            file_id = message.animation.file_id
+            file_type = 'gif'
+            session['file_type'] = 'gif'
         elif message.document:
             file_id = message.document.file_id
             # Detect actual file type for documents
