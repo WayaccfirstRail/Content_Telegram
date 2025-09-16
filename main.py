@@ -125,6 +125,17 @@ def init_database():
         )
     ''')
     
+    # Teasers table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS teasers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT,
+            file_type TEXT,
+            description TEXT,
+            created_date TEXT
+        )
+    ''')
+    
     # Insert default VIP settings
     vip_settings = [
         ('vip_price_stars', '399'),
@@ -232,6 +243,26 @@ def get_ai_response(message_text):
     
     conn.close()
     return response
+
+def get_teasers():
+    """Get all teasers from database"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT file_path, file_type, description FROM teasers ORDER BY created_date DESC')
+    teasers = cursor.fetchall()
+    conn.close()
+    return teasers
+
+def add_teaser(file_path, file_type, description):
+    """Add a teaser to the database"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO teasers (file_path, file_type, description, created_date)
+        VALUES (?, ?, ?, ?)
+    ''', (file_path, file_type, description, datetime.datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
 
 # VIP Management Functions
 
@@ -499,29 +530,91 @@ def teaser_command(message):
         markup.add(types.InlineKeyboardButton("🔄 Extend VIP Membership", callback_data="vip_access"))
         
     else:
-        teaser_text = """
-🎬 **FREE TEASER CONTENT** 🎬
+        # Get teasers from database
+        teasers = get_teasers()
+        
+        if teasers:
+            # Send first teaser (most recent)
+            file_path, file_type, description = teasers[0]
+            
+            # Escape HTML characters in description to prevent parsing errors
+            safe_description = description.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            teaser_text = f"""
+🎬 <b>FREE TEASER CONTENT</b> 🎬
 
-Here's a little preview of what's waiting for you in my exclusive collection... 
+Here's a little preview of what's waiting for you in my exclusive collection...
 
-*[This would include actual teaser content - photos, short videos, or enticing descriptions]*
+{safe_description}
 
 💝 This is just a taste of what I have for my special fans. Want to see more? Check out my full content library!
 
-💡 **VIP members get:**
+💡 <b>VIP members get:</b>
 • FREE access to ALL content
 • Exclusive VIP-only teasers (like this one, but better!)
 • Direct personal chat priority
 • Monthly bonus content
 
-✨ *"The best is yet to come..."* ✨
+✨ <i>"The best is yet to come..."</i> ✨
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP for FREE Access", callback_data="vip_access"))
+            markup.add(types.InlineKeyboardButton("🛒 Browse Content to Purchase", callback_data="browse_content"))
+            
+            bot.send_message(message.chat.id, teaser_text, reply_markup=markup, parse_mode='HTML')
+            
+            # Send the actual teaser media
+            try:
+                if file_path.startswith('http'):
+                    # It's a URL
+                    if file_type == 'photo':
+                        bot.send_photo(message.chat.id, file_path, caption="🎬 Free Teaser Preview")
+                    elif file_type == 'video':
+                        bot.send_video(message.chat.id, file_path, caption="🎬 Free Teaser Preview")
+                elif len(file_path) > 50 and not file_path.startswith('/'):
+                    # It's a Telegram file_id
+                    if file_type == 'photo':
+                        bot.send_photo(message.chat.id, file_path, caption="🎬 Free Teaser Preview")
+                    elif file_type == 'video':
+                        bot.send_video(message.chat.id, file_path, caption="🎬 Free Teaser Preview")
+                else:
+                    # It's a local file path
+                    with open(file_path, 'rb') as file:
+                        if file_type == 'photo':
+                            bot.send_photo(message.chat.id, file, caption="🎬 Free Teaser Preview")
+                        elif file_type == 'video':
+                            bot.send_video(message.chat.id, file, caption="🎬 Free Teaser Preview")
+            except Exception as e:
+                logger.error(f"Error sending teaser media: {e}")
+                bot.send_message(message.chat.id, "🎬 Teaser content is being prepared...")
+            
+            return
+        
+        # No teasers available - show "COMING SOON"
+        teaser_text = """
+🎬 <b>FREE TEASER CONTENT</b> 🎬
+
+Here's a little preview of what's waiting for you in my exclusive collection...
+
+<b>COMING SOON</b>
+
+💝 This is just a taste of what I have for my special fans. Want to see more? Check out my full content library!
+
+💡 <b>VIP members get:</b>
+• FREE access to ALL content
+• Exclusive VIP-only teasers (like this one, but better!)
+• Direct personal chat priority
+• Monthly bonus content
+
+✨ <i>"The best is yet to come..."</i> ✨
 """
         
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP for FREE Access", callback_data="vip_access"))
         markup.add(types.InlineKeyboardButton("🛒 Browse Content to Purchase", callback_data="browse_content"))
     
-    bot.send_message(message.chat.id, teaser_text, reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(message.chat.id, teaser_text, reply_markup=markup, parse_mode='HTML')
 
 @bot.message_handler(commands=['buy'])
 def buy_command(message):
@@ -705,10 +798,10 @@ def help_command(message):
     add_or_update_user(message.from_user)
     
     help_text = """
-📚 **HOW TO USE THIS BOT** 📚
+**HOW TO USE THIS BOT**
 
-💬 **Natural Chat:**
-Just type anything and I'll respond! I love chatting with my fans.
+💬 **VIP Exclusive Chat:**
+Only VIP members can chat directly with me! Upgrade to unlock personal conversations and priority responses.
 
 ⭐ **Telegram Stars:**
 Use Telegram Stars to purchase my exclusive content. It's safe, secure, and instant!
@@ -1025,6 +1118,123 @@ Your content is now available for purchase! Fans can buy it using:
         if OWNER_ID in upload_sessions:
             del upload_sessions[OWNER_ID]
 
+@bot.message_handler(commands=['owner_upload_teaser'])
+def owner_upload_teaser(message):
+    """Handle /owner_upload_teaser command - guided teaser upload flow"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    # Start teaser upload session
+    upload_sessions[OWNER_ID] = {
+        'type': 'teaser',
+        'step': 'waiting_for_file',
+        'data': {}
+    }
+    
+    upload_text = """
+🎬 **TEASER UPLOAD** 🎬
+
+📤 Send me the photo or video you want to use as a teaser.
+
+This will be shown to non-VIP users when they use /teaser command.
+
+💡 Tips:
+• Upload high-quality images or short videos
+• Keep it enticing but not revealing everything
+• This builds anticipation for your full content
+
+📱 Just send the file when ready!
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_teaser_upload"))
+    
+    bot.send_message(message.chat.id, upload_text, reply_markup=markup)
+
+@bot.message_handler(content_types=['photo', 'video'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser')
+def handle_teaser_upload(message):
+    """Handle teaser file upload from owner"""
+    session = upload_sessions[OWNER_ID]
+    
+    if session['step'] == 'waiting_for_file':
+        # Store file information
+        file_id = None
+        file_type = None
+        
+        if message.photo:
+            file_id = message.photo[-1].file_id  # Get highest resolution
+            file_type = 'photo'
+            session['file_type'] = 'photo'
+        elif message.video:
+            file_id = message.video.file_id
+            file_type = 'video'
+            session['file_type'] = 'video'
+        
+        if file_id and file_type:
+            session['file_id'] = file_id
+            session['step'] = 'waiting_for_description'
+        else:
+            bot.send_message(message.chat.id, "❌ Please send a photo or video file.")
+            return
+        
+        # Ask for description
+        desc_text = f"""
+✅ **{file_type.title()} received!**
+
+📝 Now send me a description for this teaser (what fans will see):
+
+Examples:
+• "Behind the scenes sneak peek 😉"
+• "A little taste of what's coming..."
+• "Can't wait to show you the full version 💕"
+
+Type your description:
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("⏭ Skip Description", callback_data="skip_teaser_description"))
+        markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_teaser_upload"))
+        
+        bot.send_message(message.chat.id, desc_text, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_description')
+def handle_teaser_description(message):
+    """Handle teaser description from owner"""
+    session = upload_sessions[OWNER_ID]
+    description = message.text.strip()
+    
+    if description.lower() == 'skip':
+        description = "Exclusive teaser content"
+    
+    # Save teaser to database
+    try:
+        add_teaser(session['file_id'], session['file_type'], description)
+        
+        success_text = f"""
+🎉 **TEASER UPLOADED SUCCESSFULLY!** 🎉
+
+🎬 **Type:** {session['file_type'].title()}
+📝 **Description:** {description}
+
+Your teaser is now live! Non-VIP users will see this when they use /teaser.
+
+🔄 You can upload multiple teasers - the most recent one will be shown first.
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🎬 Upload Another Teaser", callback_data="start_teaser_upload"))
+        markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
+        
+        bot.send_message(OWNER_ID, success_text, reply_markup=markup)
+        
+    except Exception as e:
+        bot.send_message(OWNER_ID, f"❌ Error saving teaser: {str(e)}")
+    
+    # Clear upload session
+    if OWNER_ID in upload_sessions:
+        del upload_sessions[OWNER_ID]
+
 @bot.message_handler(commands=['owner_list_users'])
 def owner_list_users(message):
     """Handle /owner_list_users command - show only paying customers"""
@@ -1174,6 +1384,7 @@ def owner_help(message):
 
 📦 **Content Management:**
 • `/owner_upload` - Guided file upload (photos/videos/documents)
+• `/owner_upload_teaser` - Upload teasers for non-VIP users
 • `/owner_add_content [name] [price] [url] [description]` - Add content via URL
 • `/owner_delete_content [name]` - Remove content
 
@@ -1197,10 +1408,13 @@ def owner_help(message):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
-        types.InlineKeyboardButton("📤 Upload File", callback_data="start_upload"),
-        types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content")
+        types.InlineKeyboardButton("📤 Upload Content", callback_data="start_upload"),
+        types.InlineKeyboardButton("🎬 Upload Teaser", callback_data="start_teaser_upload")
     )
-    markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
+    markup.add(
+        types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content"),
+        types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users")
+    )
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
 
@@ -1348,7 +1562,24 @@ def handle_callback_query(call):
     elif call.data == "browse_content":
         show_content_catalog(call.message.chat.id, call.from_user.id)
     elif call.data == "ask_question":
-        bot.send_message(call.message.chat.id, "💬 Feel free to ask me anything! Just type your message and I'll respond personally. 😊")
+        fomo_message = """
+🚫 **Chat Access Restricted** 🚫
+
+💎 This feature is exclusive to VIP members only!
+
+🌟 **You're missing out on:**
+• Direct personal conversations with me
+• Priority responses to all your messages  
+• Exclusive behind-the-scenes chat access
+• Personal attention and custom interactions
+
+💰 Upgrade to VIP now and unlock unlimited chat access!
+"""
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP Now", callback_data="vip_access"))
+        markup.add(types.InlineKeyboardButton("🛒 Browse Content Instead", callback_data="browse_content"))
+        
+        bot.send_message(call.message.chat.id, fomo_message, reply_markup=markup)
     elif call.data == "help":
         help_command(call.message)
     elif call.data == "cmd_help":
@@ -1419,6 +1650,60 @@ def handle_callback_query(call):
             owner_upload_content(fake_message)
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "start_teaser_upload":
+        if call.from_user.id == OWNER_ID:
+            # Create a fake message object for the teaser upload function
+            fake_message = type('obj', (object,), {
+                'chat': call.message.chat,
+                'from_user': call.from_user,
+                'text': '/owner_upload_teaser'
+            })
+            owner_upload_teaser(fake_message)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "cancel_teaser_upload":
+        if call.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser':
+            del upload_sessions[OWNER_ID]
+            bot.send_message(call.message.chat.id, "❌ Teaser upload cancelled.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ No active teaser upload session.")
+    elif call.data == "skip_teaser_description":
+        if call.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser':
+            session = upload_sessions[OWNER_ID]
+            if session['step'] == 'waiting_for_description':
+                session['description'] = "Exclusive teaser content"
+                # Save teaser to database
+                try:
+                    add_teaser(session['file_id'], session['file_type'], session['description'])
+                    
+                    success_text = f"""
+🎉 **TEASER UPLOADED SUCCESSFULLY!** 🎉
+
+🎬 **Type:** {session['file_type'].title()}
+📝 **Description:** {session['description']}
+
+Your teaser is now live! Non-VIP users will see this when they use /teaser.
+
+🔄 You can upload multiple teasers - the most recent one will be shown first.
+"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("🎬 Upload Another Teaser", callback_data="start_teaser_upload"))
+                    markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
+                    
+                    bot.send_message(call.message.chat.id, success_text, reply_markup=markup)
+                    
+                    # Clear upload session
+                    del upload_sessions[OWNER_ID]
+                    
+                except Exception as e:
+                    bot.send_message(call.message.chat.id, f"❌ Error saving teaser: {str(e)}")
+                    if OWNER_ID in upload_sessions:
+                        del upload_sessions[OWNER_ID]
+            else:
+                bot.send_message(call.message.chat.id, "❌ Invalid step for skipping description.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ No active teaser upload session.")
     
     # Answer callback to remove loading state
     bot.answer_callback_query(call.id)
@@ -1483,9 +1768,30 @@ Use the buttons below to explore your new VIP privileges:
         
         # Notify owner of new VIP subscription
         try:
-            bot.send_message(OWNER_ID, f"💎 NEW VIP SUBSCRIPTION!\n👤 {message.from_user.first_name} (@{message.from_user.username})\n💰 {payment.total_amount} Stars\n🆔 ID: {user_id}")
-        except:
-            pass
+            # Format date as requested
+            today = datetime.datetime.now()
+            formatted_date = today.strftime("%b %d").upper()
+            
+            # Create enhanced notification with clickable name
+            owner_notification = f"""
+💎 **NEW VIP SUBSCRIPTION!** 💎
+
+👤 [{message.from_user.first_name}](tg://user?id={user_id})
+🆔 User ID: {user_id}
+📅 Date: {formatted_date}
+💰 Amount: {payment.total_amount} Stars
+⏰ Duration: {duration_days} days
+
+💬 Click the name to message them directly!
+"""
+            bot.send_message(OWNER_ID, owner_notification, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error sending owner notification: {e}")
+            # Fallback notification
+            try:
+                bot.send_message(OWNER_ID, f"💎 NEW VIP SUBSCRIPTION!\n👤 {message.from_user.first_name}\n💰 {payment.total_amount} Stars\n🆔 ID: {user_id}")
+            except:
+                pass
             
     elif len(payload_parts) >= 3 and payload_parts[0] == 'content':
         content_name = payload_parts[1]
