@@ -2761,6 +2761,33 @@ def show_content_edit_interface(chat_id, content_name):
     # Content type indicator
     type_indicator = "💎 VIP" if content_type == "vip" else "🛒 Browse"
     
+    # Generate secure preview URL using Flask url_for
+    def generate_preview_url(content_name):
+        """Generate secure preview URL using Flask's url_for within app context"""
+        try:
+            with app.app_context():
+                from flask import url_for, request
+                # Use url_for to generate the URL properly
+                return url_for('preview_content', content_name=content_name, _external=True)
+        except Exception as e:
+            logger.error(f"Error generating preview URL: {e}")
+            # Fallback to a relative URL if url_for fails
+            import urllib.parse
+            encoded_name = urllib.parse.quote(content_name)
+            return f"/content/preview/{encoded_name}"
+    
+    preview_url = generate_preview_url(name)
+    
+    # Create secure file path display with clickable link
+    if file_path.startswith(('http://', 'https://')):
+        # For external URLs, sanitize and display safely
+        safe_url = file_path.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+        file_display = f"<a href='{safe_url}'>🔗 External URL (Click to view)</a>"
+    else:
+        # For internal content, use the generated preview URL
+        safe_preview_url = preview_url.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+        file_display = f"<a href='{safe_preview_url}'>🖼️ Preview Content (Click to view)</a>"
+    
     edit_text = f"""
 ✏️ <b>EDIT CONTENT</b> ✏️
 
@@ -2774,7 +2801,7 @@ def show_content_edit_interface(chat_id, content_name):
 <b>Description:</b>
 {safe_description}
 
-<b>File Path:</b> {file_path[:50]}{"..." if len(file_path) > 50 else ""}
+<b>File Path:</b> {file_display}
 
 💡 <b>What would you like to edit?</b>
 """
@@ -4201,6 +4228,32 @@ def handle_text_messages(message):
     
     bot.send_message(message.chat.id, response, reply_markup=markup)
 
+# Security functions for owner-only access control
+
+def generate_secure_access_token(content_name):
+    """Generate secure HMAC-based access token for content preview"""
+    import hashlib
+    import hmac
+    
+    # Use bot token as secret key - only owner knows this
+    secret_key = BOT_TOKEN.encode('utf-8')
+    
+    # Create message including content name and a fixed salt
+    message = f"content_preview:{content_name}:owner_access".encode('utf-8')
+    
+    # Generate HMAC-SHA256 token
+    token = hmac.new(secret_key, message, hashlib.sha256).hexdigest()
+    
+    return token
+
+def generate_owner_access_url(content_name):
+    """Generate secure access URL for owner to preview content"""
+    token = generate_secure_access_token(content_name)
+    # Get the domain from environment or use default for development
+    domain = os.environ.get('REPL_SLUG', 'localhost:5000')
+    
+    return f"https://{domain}/content/preview/{content_name}?token={token}"
+
 # Flask routes for Replit hosting
 
 @app.route('/')
@@ -4212,6 +4265,232 @@ def home():
 def health():
     """Health check for monitoring"""
     return {"status": "healthy", "bot": "running"}
+
+@app.route('/content/preview/<content_name>')
+def preview_content(content_name):
+    """Serve content preview by content name - OWNER ONLY ACCESS"""
+    from flask import send_file, redirect, abort, Response, request
+    import io
+    import hashlib
+    import hmac
+    
+    # SECURITY: Owner-only access control
+    # Check for access token in query parameters or headers
+    access_token = request.args.get('token') or request.headers.get('X-Access-Token')
+    
+    if not access_token:
+        logger.warning(f"Unauthorized access attempt to content '{content_name}' from {request.remote_addr}")
+        abort(403, "Access denied: Authentication required")
+    
+    # Validate access token using bot token as secret key
+    # This ensures only someone who knows the bot token can generate valid access tokens
+    expected_token = generate_secure_access_token(content_name)
+    
+    if not hmac.compare_digest(access_token, expected_token):
+        logger.warning(f"Invalid access token for content '{content_name}' from {request.remote_addr}")
+        abort(403, "Access denied: Invalid authentication token")
+    
+    try:
+        # Get content details from database
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT file_path, description, content_type FROM content_items WHERE name = ?', (content_name,))
+        content = cursor.fetchone()
+        conn.close()
+        
+        if not content:
+            abort(404, f"Content '{content_name}' not found")
+        
+        file_path, description, content_type = content
+        
+        logger.info(f"Authorized access to content '{content_name}' from {request.remote_addr}")
+        return serve_content_file(file_path, content_name, description)
+        
+    except Exception as e:
+        logger.error(f"Error serving content preview {content_name}: {e}")
+        abort(500, f"Error serving content: {str(e)}")
+
+# REMOVED: Dangerous /content/file/<file_id> endpoint that acted as open Telegram proxy
+
+def serve_content_file(file_path, content_name="Content", description=""):
+    """Secure helper function to serve content files from various sources"""
+    from flask import send_file, redirect, abort, Response
+    import os.path
+    import re
+    import io
+    
+    # Maximum file size for Telegram downloads (50MB)
+    MAX_TELEGRAM_FILE_SIZE = 50 * 1024 * 1024
+    
+    # Allowed content types for security
+    ALLOWED_CONTENT_TYPES = {
+        'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+        'png': 'image/png', 'gif': 'image/gif',
+        'webp': 'image/webp', 'bmp': 'image/bmp',
+        'mp4': 'video/mp4', 'mov': 'video/quicktime',
+        'avi': 'video/x-msvideo', 'webm': 'video/webm',
+        'mkv': 'video/x-matroska'
+    }
+    
+    def is_telegram_file_id(file_path):
+        """Securely detect Telegram file IDs using proper validation"""
+        # Telegram file IDs are alphanumeric + hyphens/underscores, typically 20-100 chars
+        if not isinstance(file_path, str) or len(file_path) < 20 or len(file_path) > 200:
+            return False
+        # Must not be a path (no slashes) and must match Telegram file ID pattern
+        return '/' not in file_path and re.match(r'^[A-Za-z0-9_-]+$', file_path) is not None
+    
+    def secure_local_file_path(file_path):
+        """Secure local file path resolution with path traversal protection"""
+        # Define allowed directories for content files
+        allowed_dirs = ['uploads', 'content', 'static', 'media']
+        
+        # Normalize the path to prevent traversal attacks
+        try:
+            # Remove any potential path traversal attempts
+            normalized_path = os.path.normpath(file_path)
+            
+            # Ensure the path doesn't try to go up directories
+            if '..' in normalized_path or normalized_path.startswith('/'):
+                return None
+                
+            # Check if path starts with an allowed directory
+            path_parts = normalized_path.split(os.sep)
+            if not path_parts or path_parts[0] not in allowed_dirs:
+                return None
+                
+            # Construct secure absolute path
+            secure_path = os.path.join(os.getcwd(), normalized_path)
+            
+            # Final security check: ensure resolved path is within allowed directories
+            resolved_path = os.path.realpath(secure_path)
+            base_dir = os.path.realpath(os.getcwd())
+            
+            if not resolved_path.startswith(base_dir):
+                return None
+                
+            return secure_path
+            
+        except (ValueError, OSError) as e:
+            logger.error(f"Path security validation failed: {e}")
+            return None
+    
+    try:
+        if file_path.startswith(('http://', 'https://')):
+            # External URL - validate and redirect
+            # Basic URL validation to prevent malicious redirects
+            if not re.match(r'^https?://[a-zA-Z0-9.-]+/.*', file_path):
+                abort(400, "Invalid external URL format")
+            return redirect(file_path)
+            
+        elif is_telegram_file_id(file_path):
+            # Secure Telegram file handling
+            try:
+                file_info = bot.get_file(file_path)
+                
+                # Check file size limit
+                if hasattr(file_info, 'file_size') and file_info.file_size is not None and file_info.file_size > MAX_TELEGRAM_FILE_SIZE:
+                    abort(413, f"File too large: {file_info.file_size} bytes (max: {MAX_TELEGRAM_FILE_SIZE})")
+                
+                # Validate file type
+                file_extension = ''
+                if file_info.file_path and '.' in file_info.file_path:
+                    file_extension = file_info.file_path.split('.')[-1].lower()
+                    if file_extension not in ALLOWED_CONTENT_TYPES:
+                        abort(415, f"Unsupported file type: {file_extension}")
+                
+                # Construct secure Telegram URL
+                file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+                
+                # Stream download with size limit enforcement
+                with requests.get(file_url, timeout=30, stream=True) as response:
+                    response.raise_for_status()
+                    
+                    # Check Content-Length header for size validation
+                    content_length = response.headers.get('Content-Length')
+                    if content_length and int(content_length) > MAX_TELEGRAM_FILE_SIZE:
+                        abort(413, f"File too large: {content_length} bytes")
+                    
+                    # Stream file content with size checking
+                    file_content = io.BytesIO()
+                    downloaded_size = 0
+                    
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            downloaded_size += len(chunk)
+                            if downloaded_size > MAX_TELEGRAM_FILE_SIZE:
+                                abort(413, "File size limit exceeded during download")
+                            file_content.write(chunk)
+                    
+                    file_content.seek(0)
+                    
+                    # Determine secure content type
+                    content_type = ALLOWED_CONTENT_TYPES.get(file_extension, 'application/octet-stream')
+                    
+                    # Security headers
+                    secure_headers = {
+                        'Content-Disposition': f'inline; filename="{re.sub(r"[^a-zA-Z0-9._-]", "_", content_name)}.{file_extension}"',
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0',
+                        'X-Content-Type-Options': 'nosniff',
+                        'Content-Security-Policy': "default-src 'none'; img-src 'self'; media-src 'self'"
+                    }
+                    
+                    return Response(
+                        file_content.getvalue(),
+                        mimetype=content_type,
+                        headers=secure_headers
+                    )
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error downloading from Telegram: {e}")
+                abort(502, "Unable to retrieve file from Telegram")
+            except Exception as e:
+                logger.error(f"Telegram file processing error: {e}")
+                abort(500, "File processing error")
+                
+        else:
+            # Secure local file serving with path traversal protection
+            secure_path = secure_local_file_path(file_path)
+            if not secure_path:
+                abort(403, "Access to this file path is not allowed")
+                
+            try:
+                # Additional security: check file exists and is readable
+                if not os.path.isfile(secure_path):
+                    abort(404, "File not found")
+                    
+                # Validate file extension for local files too
+                file_ext = ''
+                if '.' in secure_path:
+                    file_ext = secure_path.split('.')[-1].lower()
+                    if file_ext not in ALLOWED_CONTENT_TYPES:
+                        abort(415, f"Unsupported local file type: {file_ext}")
+                
+                # Apply security headers to local file serving as well
+                response = send_file(secure_path, as_attachment=False, conditional=True)
+                
+                # Add security headers
+                response.headers['X-Content-Type-Options'] = 'nosniff'
+                response.headers['Content-Security-Policy'] = "default-src 'none'; img-src 'self'; media-src 'self'"
+                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response.headers['Pragma'] = 'no-cache'
+                response.headers['Expires'] = '0'
+                
+                return response
+                
+            except FileNotFoundError:
+                abort(404, "Local file not found")
+            except PermissionError:
+                abort(403, "Permission denied")
+            except Exception as e:
+                logger.error(f"Local file serving error: {e}")
+                abort(500, "Error serving local file")
+                
+    except Exception as e:
+        logger.error(f"Error in serve_content_file: {e}")
+        abort(500, "File serving error")
 
 def run_bot():
     """Run the bot with infinity polling and better error handling"""
