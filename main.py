@@ -2089,26 +2089,87 @@ def owner_help(message):
 - All changes take effect immediately
 """
     
-    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup = types.InlineKeyboardMarkup(row_width=1)
     
-    # VIP Management - TOP PRIORITY section (reorganized to be first and prominent)
+    # VIP Management - TOP PRIORITY section (keep as-is)
     vip_count = get_vip_content_count()
     markup.add(types.InlineKeyboardButton(f"💎 VIP Dashboard ({vip_count})", callback_data="cmd_vip"))
     
-    # Content Management
-    markup.add(
-        types.InlineKeyboardButton("📤 Upload Content", callback_data="start_upload"),
-        types.InlineKeyboardButton("🎬 Upload Teaser", callback_data="start_teaser_upload")
-    )
-    markup.add(
-        types.InlineKeyboardButton("📝 Manage Teasers", callback_data="owner_list_teasers"),
-        types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content")
-    )
-    
-    # User Management  
-    markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
+    # Section menus
+    markup.add(types.InlineKeyboardButton("📦 Content Management", callback_data="content_management_menu"))
+    markup.add(types.InlineKeyboardButton("🎬 Teaser Management", callback_data="teaser_management_menu"))
+    markup.add(types.InlineKeyboardButton("👥 User Management", callback_data="user_management_menu"))
+    markup.add(types.InlineKeyboardButton("🤖 Bot Configuration", callback_data="bot_config_menu"))
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
+
+# Section menu functions
+def show_content_management_menu(chat_id):
+    """Show Content Management section menu"""
+    menu_text = """
+📦 *CONTENT MANAGEMENT* 📦
+
+Choose an action below to manage your content:
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📤 Upload Content", callback_data="start_upload"),
+        types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content")
+    )
+    markup.add(types.InlineKeyboardButton("❌ Delete Content", callback_data="show_delete_content_help"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
+    
+    bot.send_message(chat_id, menu_text, reply_markup=markup, parse_mode='Markdown')
+
+def show_teaser_management_menu(chat_id):
+    """Show Teaser Management section menu"""
+    menu_text = """
+🎬 *TEASER MANAGEMENT* 🎬
+
+Choose an action below to manage your teasers:
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🎬 Upload Teaser", callback_data="start_teaser_upload"),
+        types.InlineKeyboardButton("📝 Manage Teasers", callback_data="owner_list_teasers")
+    )
+    markup.add(types.InlineKeyboardButton("❌ Delete Teaser", callback_data="show_delete_teaser_help"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
+    
+    bot.send_message(chat_id, menu_text, reply_markup=markup, parse_mode='Markdown')
+
+def show_user_management_menu(chat_id):
+    """Show User Management section menu"""
+    menu_text = """
+👥 *USER MANAGEMENT* 👥
+
+Choose an action below to manage users and analytics:
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
+    markup.add(types.InlineKeyboardButton("📊 Analytics Dashboard", callback_data="owner_analytics"))
+    markup.add(types.InlineKeyboardButton("💎 View VIP Members", callback_data="owner_list_vips"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
+    
+    bot.send_message(chat_id, menu_text, reply_markup=markup, parse_mode='Markdown')
+
+def show_bot_config_menu(chat_id):
+    """Show Bot Configuration section menu"""
+    menu_text = """
+🤖 *BOT CONFIGURATION* 🤖
+
+Choose an action below to configure bot settings:
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("✏️ Set AI Responses", callback_data="show_set_responses_help"))
+    markup.add(types.InlineKeyboardButton("⚙️ Other Settings", callback_data="show_other_settings_help"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
+    
+    bot.send_message(chat_id, menu_text, reply_markup=markup, parse_mode='Markdown')
 
 # Owner VIP Management Commands
 
@@ -2851,6 +2912,50 @@ Add a description that VIP members will see:
                 show_vip_content_management(call.message.chat.id)
             else:
                 bot.send_message(call.message.chat.id, f"❌ Failed to delete VIP content '{content_name}'.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    # Section menu handlers
+    elif call.data == "content_management_menu":
+        if call.from_user.id == OWNER_ID:
+            show_content_management_menu(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "teaser_management_menu":
+        if call.from_user.id == OWNER_ID:
+            show_teaser_management_menu(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "user_management_menu":
+        if call.from_user.id == OWNER_ID:
+            show_user_management_menu(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "bot_config_menu":
+        if call.from_user.id == OWNER_ID:
+            show_bot_config_menu(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    # Helper callbacks for section menus
+    elif call.data == "show_delete_content_help":
+        if call.from_user.id == OWNER_ID:
+            bot.send_message(call.message.chat.id, "📦 To delete content, use: `/owner_delete_content [name]`\n\n💡 Tip: Use `/owner_list_content` to see available content names.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "show_delete_teaser_help":
+        if call.from_user.id == OWNER_ID:
+            bot.send_message(call.message.chat.id, "🎬 To delete a teaser, use: `/owner_delete_teaser [ID]`\n\n💡 Tip: Use `/owner_list_teasers` first to see teaser IDs.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "show_set_responses_help":
+        if call.from_user.id == OWNER_ID:
+            bot.send_message(call.message.chat.id, "✏️ To set AI responses, use: `/owner_set_response [key] [text]`\n\n🔤 Valid keys: greeting, question, compliment, default\n\n💡 Example: `/owner_set_response greeting Hello there! 😊`")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "show_other_settings_help":
+        if call.from_user.id == OWNER_ID:
+            bot.send_message(call.message.chat.id, "⚙️ Other available settings:\n\n• `/owner_set_vip_price [stars]` - Set VIP subscription price\n• Use the 💎 VIP Dashboard for VIP settings\n• Most other settings are in the VIP dashboard")
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     
