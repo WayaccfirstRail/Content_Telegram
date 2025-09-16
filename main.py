@@ -81,6 +81,20 @@ def init_database():
         )
     ''')
     
+    # User purchases table - tracks individual content purchases for permanent access
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            content_name TEXT,
+            purchase_date TEXT,
+            price_paid INTEGER,
+            UNIQUE (user_id, content_name),
+            FOREIGN KEY (user_id) REFERENCES users (user_id),
+            FOREIGN KEY (content_name) REFERENCES content_items (name)
+        )
+    ''')
+    
     # Scheduled posts table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS scheduled_posts (
@@ -171,9 +185,15 @@ def init_database():
     conn.close()
     logger.info("Database initialized successfully")
 
+def get_db_connection():
+    """Get SQLite database connection with proper settings"""
+    conn = sqlite3.connect('content_bot.db')
+    conn.execute('PRAGMA foreign_keys = ON')  # Enable foreign key constraints
+    return conn
+
 def get_user_data(user_id):
     """Get user data from database"""
-    conn = sqlite3.connect('content_bot.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
     user = cursor.fetchone()
@@ -215,6 +235,158 @@ def add_or_update_user(user):
     
     conn.commit()
     conn.close()
+
+def check_user_owns_content(user_id, content_name):
+    """Check if user has already purchased specific content"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM user_purchases WHERE user_id = ? AND content_name = ?', (user_id, content_name))
+    purchase = cursor.fetchone()
+    conn.close()
+    return purchase is not None
+
+def get_user_purchased_content(user_id):
+    """Get all content purchased by a user"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT up.content_name, up.purchase_date, up.price_paid, ci.description, ci.file_path
+        FROM user_purchases up
+        JOIN content_items ci ON up.content_name = ci.name
+        WHERE up.user_id = ?
+        ORDER BY up.purchase_date DESC
+    ''', (user_id,))
+    purchases = cursor.fetchall()
+    conn.close()
+    return purchases
+
+def deliver_owned_content(chat_id, user_id, content_name):
+    """Re-deliver content that user already owns"""
+    # First verify the user actually owns this content
+    if not check_user_owns_content(user_id, content_name):
+        bot.send_message(chat_id, "❌ You don't own this content. Please purchase it first!")
+        return False
+    
+    # Get content details
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT file_path, description FROM content_items WHERE name = ?', (content_name,))
+    content = cursor.fetchone()
+    conn.close()
+    
+    if not content:
+        bot.send_message(chat_id, f"❌ Content '{content_name}' not found.")
+        return False
+    
+    file_path, description = content
+    
+    # Send re-access message
+    reaccess_message = f"""
+✅ <b>OWNED CONTENT ACCESS</b> ✅
+
+🎁 Here's your purchased content again!
+
+<b>{content_name}</b>
+{description}
+
+💕 Thank you for being an amazing supporter!
+"""
+    
+    bot.send_message(chat_id, reaccess_message, parse_mode='HTML')
+    
+    # Send the actual content (same logic as purchase delivery)
+    try:
+        if file_path.startswith('http'):
+            # It's a URL
+            if any(ext in file_path.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                bot.send_photo(chat_id, file_path, caption=f"🎁 {content_name}")
+            elif any(ext in file_path.lower() for ext in ['.mp4', '.mov', '.avi']):
+                bot.send_video(chat_id, file_path, caption=f"🎁 {content_name}")
+            else:
+                bot.send_document(chat_id, file_path, caption=f"🎁 {content_name}")
+        elif len(file_path) > 50 and not file_path.startswith('/'):
+            # It's a Telegram file_id
+            try:
+                bot.send_photo(chat_id, file_path, caption=f"🎁 {content_name}")
+            except:
+                try:
+                    bot.send_video(chat_id, file_path, caption=f"🎁 {content_name}")
+                except:
+                    try:
+                        bot.send_document(chat_id, file_path, caption=f"🎁 {content_name}")
+                    except:
+                        bot.send_message(chat_id, f"🎁 Your content: {content_name}\n\nFile ID: {file_path}\n\n⚠️ If you have trouble accessing this content, please contact me!")
+        else:
+            # It's a local file path
+            with open(file_path, 'rb') as file:
+                if any(ext in file_path.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                    bot.send_photo(chat_id, file, caption=f"🎁 {content_name}")
+                elif any(ext in file_path.lower() for ext in ['.mp4', '.mov', '.avi']):
+                    bot.send_video(chat_id, file, caption=f"🎁 {content_name}")
+                else:
+                    bot.send_document(chat_id, file, caption=f"🎁 {content_name}")
+    except Exception as e:
+        bot.send_message(chat_id, f"🎁 Your owned content: {content_name}\n\n⚠️ There was an issue delivering your content. Please contact me and I'll send it manually!")
+        logger.error(f"Error sending owned content {content_name}: {e}")
+        return False
+    
+    return True
+
+def show_my_content(chat_id, user_id):
+    """Show user's purchased content library with re-access options"""
+    # Get user's purchased content
+    purchases = get_user_purchased_content(user_id)
+    
+    if not purchases:
+        no_content_message = """
+📂 <b>MY CONTENT LIBRARY</b> 📂
+
+🚫 You haven't purchased any content yet!
+
+🛒 <b>Ready to get started?</b>
+Browse our exclusive content catalog and treat yourself to something special!
+
+💡 <b>Tip:</b> VIP members get FREE access to all content!
+"""
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content"))
+        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP", callback_data="vip_access"))
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+        
+        bot.send_message(chat_id, no_content_message, reply_markup=markup, parse_mode='HTML')
+        return
+    
+    # Create content library message
+    library_text = f"📂 <b>MY CONTENT LIBRARY</b> 📂\n\n"
+    library_text += f"🎉 You own {len(purchases)} piece(s) of exclusive content!\n\n"
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    for content_name, purchase_date, price_paid, description, file_path in purchases:
+        # Escape HTML special characters
+        safe_name = content_name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        safe_description = description.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        
+        # Format purchase date
+        try:
+            date_obj = datetime.datetime.fromisoformat(purchase_date)
+            formatted_date = date_obj.strftime("%b %d, %Y")
+        except:
+            formatted_date = "Unknown"
+        
+        library_text += f"✨ <b>{safe_name}</b>\n"
+        library_text += f"📅 Purchased: {formatted_date}\n"
+        library_text += f"💰 Paid: {price_paid} Stars\n"
+        library_text += f"📝 {safe_description}\n\n"
+        
+        # Add re-access button for each item
+        markup.add(types.InlineKeyboardButton(f"🎁 Access {content_name}", callback_data=f"access_{content_name}"))
+    
+    # Add navigation buttons
+    markup.add(types.InlineKeyboardButton("🛒 Browse More Content", callback_data="browse_content"))
+    markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+    
+    bot.send_message(chat_id, library_text, reply_markup=markup, parse_mode='HTML')
 
 def get_ai_response(message_text):
     """Get AI-style response based on message content"""
@@ -506,10 +678,11 @@ I'm so excited to have you here! This is where I share my most intimate and excl
 💫 Quick actions:
 """
     
-    # Create inline keyboard with only 3 buttons in specified order
+    # Create inline keyboard with main menu buttons
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton("🌟 VIP Access", callback_data="vip_access"))
     markup.add(types.InlineKeyboardButton("🎬 View Teasers", callback_data="teasers"))
+    markup.add(types.InlineKeyboardButton("📂 My Content", callback_data="my_content"))
     markup.add(types.InlineKeyboardButton("ℹ️ Help", callback_data="help"))
     
     bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
@@ -795,8 +968,15 @@ def show_content_catalog(chat_id, user_id=None):
                 catalog_text += f"💎 <b>VIP FREE ACCESS</b>\n"
                 markup.add(types.InlineKeyboardButton(f"🎁 Get {name} (VIP FREE)", callback_data=f"vip_get_{name}"))
             else:
-                catalog_text += f"💰 {price} Stars\n"
-                markup.add(types.InlineKeyboardButton(f"⭐ Buy {name} ({price} Stars)", callback_data=f"buy_{name}"))
+                # Check if user already owns this content
+                owns_content = check_user_owns_content(user_id, name)
+                
+                if owns_content:
+                    catalog_text += f"✅ <b>OWNED</b> - You already purchased this!\n"
+                    markup.add(types.InlineKeyboardButton(f"🎁 Access {name} (Owned)", callback_data=f"access_{name}"))
+                else:
+                    catalog_text += f"💰 {price} Stars\n"
+                    markup.add(types.InlineKeyboardButton(f"⭐ Buy {name} ({price} Stars)", callback_data=f"buy_{name}"))
             
             catalog_text += f"📝 {safe_description}\n\n"
         
@@ -1651,6 +1831,8 @@ def handle_callback_query(call):
         teaser_command(call.message)
     elif call.data == "browse_content":
         show_content_catalog(call.message.chat.id, call.from_user.id)
+    elif call.data == "my_content":
+        show_my_content(call.message.chat.id, call.from_user.id)
     elif call.data == "ask_question":
         fomo_message = """
 🚫 **Chat Access Restricted** 🚫
@@ -1698,6 +1880,9 @@ def handle_callback_query(call):
     elif call.data.startswith("vip_get_"):
         item_name = call.data.replace("vip_get_", "")
         deliver_vip_content(call.message.chat.id, call.from_user.id, item_name)
+    elif call.data.startswith("access_"):
+        item_name = call.data.replace("access_", "")
+        deliver_owned_content(call.message.chat.id, call.from_user.id, item_name)
     elif call.data == "owner_list_teasers":
         if call.from_user.id != OWNER_ID:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
@@ -1910,10 +2095,17 @@ Use the buttons below to explore your new VIP privileges:
         user_id = int(payload_parts[2])
         
         # Update user's total spent
-        conn = sqlite3.connect('content_bot.db')
+        conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('UPDATE users SET total_stars_spent = total_stars_spent + ? WHERE user_id = ?', 
                       (payment.total_amount, user_id))
+        
+        # Record the purchase for permanent access (use INSERT OR IGNORE to prevent duplicates)
+        purchase_date = datetime.datetime.now().isoformat()
+        cursor.execute('''
+            INSERT OR IGNORE INTO user_purchases (user_id, content_name, purchase_date, price_paid)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, content_name, purchase_date, payment.total_amount))
         
         # Get content details
         cursor.execute('SELECT file_path, description FROM content_items WHERE name = ?', (content_name,))
