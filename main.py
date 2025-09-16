@@ -509,6 +509,7 @@ Send me the file you want to add as VIP content:
 
 def handle_vip_file_upload(message, file_id, file_type):
     """Handle VIP content file upload"""
+    logger.info(f"VIP content handler called - Content type: {message.content_type}, File type: {file_type}")
     session = upload_sessions[OWNER_ID]
     
     # Store file information
@@ -1501,6 +1502,8 @@ After you send the file, I'll ask for the name, price, and description.
 @bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') not in ['teaser', 'vip_content'])
 def handle_file_upload(message):
     """Handle file uploads for content creation (excludes teaser sessions)"""
+    logger.info(f"General content handler triggered - Content type: {message.content_type}, Session: {upload_sessions.get(OWNER_ID, 'None')}")
+    
     # Check if we're in any upload session
     if OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID]['step'] != 'waiting_for_file':
         bot.send_message(message.chat.id, "📤 To upload content, start with `/owner_upload` or use VIP upload!")
@@ -1786,6 +1789,7 @@ This will be shown to non-VIP users when they use /teaser command.
 @bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser')
 def handle_teaser_upload(message):
     """Handle teaser file upload from owner"""
+    logger.info(f"Teaser handler triggered - Content type: {message.content_type}, Session: {upload_sessions.get(OWNER_ID, 'None')}")
     session = upload_sessions[OWNER_ID]
     
     if session['step'] == 'waiting_for_file':
