@@ -6,6 +6,10 @@ import telebot
 from telebot import types
 from flask import Flask
 import logging
+import requests
+import tempfile
+from urllib.parse import urlparse
+import mimetypes
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -994,6 +998,159 @@ def deliver_vip_content(chat_id, user_id, content_name):
     except Exception as e:
         logger.error(f"Error notifying owner of VIP access: {e}")
 
+def download_and_upload_image(url, chat_id=None):
+    """
+    Download an image from an external URL and upload it to Telegram to get a permanent file_id.
+    
+    Args:
+        url (str): The external image URL to download
+        chat_id (int): Optional chat ID for progress notifications
+    
+    Returns:
+        tuple: (success, file_id_or_error_message, file_type)
+    """
+    try:
+        # Validate URL
+        parsed_url = urlparse(url)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            return False, "❌ Invalid URL format", None
+        
+        # Send progress notification if chat_id provided
+        if chat_id:
+            bot.send_message(chat_id, "⏳ Downloading image from external URL...", parse_mode='HTML')
+        
+        # Download the image with appropriate headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        # Download with timeout and size limit
+        response = requests.get(url, headers=headers, timeout=30, stream=True)
+        response.raise_for_status()
+        
+        # Check content type
+        content_type = response.headers.get('content-type', '').lower()
+        if not content_type.startswith('image/'):
+            return False, "❌ URL does not point to an image file", None
+        
+        # Check file size (limit to 50MB to stay within Telegram limits)
+        content_length = response.headers.get('content-length')
+        if content_length and int(content_length) > 50 * 1024 * 1024:
+            return False, "❌ Image file too large (max 50MB)", None
+        
+        # Determine file extension and type
+        file_extension = None
+        file_type = "photo"  # Default to photo
+        
+        if 'jpeg' in content_type or 'jpg' in content_type:
+            file_extension = '.jpg'
+            file_type = "photo"
+        elif 'png' in content_type:
+            file_extension = '.png'
+            file_type = "photo"
+        elif 'gif' in content_type:
+            file_extension = '.gif'
+            file_type = "animation"
+        elif 'webp' in content_type:
+            file_extension = '.webp'
+            file_type = "photo"
+        else:
+            # Try to get extension from URL
+            url_path = parsed_url.path.lower()
+            if any(ext in url_path for ext in ['.jpg', '.jpeg']):
+                file_extension = '.jpg'
+                file_type = "photo"
+            elif '.png' in url_path:
+                file_extension = '.png'
+                file_type = "photo"
+            elif '.gif' in url_path:
+                file_extension = '.gif'
+                file_type = "animation"
+            elif '.webp' in url_path:
+                file_extension = '.webp'
+                file_type = "photo"
+            else:
+                file_extension = '.jpg'  # Default fallback
+                file_type = "photo"
+        
+        # Update progress
+        if chat_id:
+            bot.send_message(chat_id, "📤 Uploading to Telegram...", parse_mode='HTML')
+        
+        # Create temporary file and download content
+        with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+            # Download in chunks to handle large files
+            downloaded_size = 0
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    temp_file.write(chunk)
+                    downloaded_size += len(chunk)
+                    # Stop if file gets too large
+                    if downloaded_size > 50 * 1024 * 1024:
+                        temp_file.close()
+                        os.unlink(temp_file.name)
+                        return False, "❌ Image file too large (max 50MB)", None
+            
+            temp_file_path = temp_file.name
+        
+        # Upload to Telegram based on file type
+        try:
+            with open(temp_file_path, 'rb') as file:
+                if file_type == "animation":
+                    # Upload as animation (GIF)
+                    result = bot.send_animation(OWNER_ID, file)
+                    if result and result.animation:
+                        file_id = result.animation.file_id
+                    else:
+                        raise Exception("Failed to get animation file_id from Telegram")
+                else:
+                    # Upload as photo
+                    result = bot.send_photo(OWNER_ID, file)
+                    if result and result.photo:
+                        file_id = result.photo[-1].file_id  # Get highest resolution
+                    else:
+                        raise Exception("Failed to get photo file_id from Telegram")
+                
+                # Delete the temporary file
+                os.unlink(temp_file_path)
+                
+                # Send success notification
+                if chat_id:
+                    bot.send_message(chat_id, "✅ Image successfully uploaded to Telegram!", parse_mode='HTML')
+                
+                logger.info(f"Successfully converted URL to file_id: {url} -> {file_id}")
+                return True, file_id, file_type
+                
+        except Exception as upload_error:
+            # Clean up temp file on upload error
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+            logger.error(f"Error uploading to Telegram: {upload_error}")
+            return False, f"❌ Failed to upload to Telegram: {str(upload_error)}", None
+    
+    except requests.exceptions.Timeout:
+        return False, "❌ Download timed out. Please try again or use a different URL.", None
+    except requests.exceptions.ConnectionError:
+        return False, "❌ Connection error. Please check the URL and try again.", None
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            return False, "❌ Access forbidden. The image may have hotlink protection.", None
+        elif e.response.status_code == 404:
+            return False, "❌ Image not found (404). Please check the URL.", None
+        else:
+            return False, f"❌ HTTP error {e.response.status_code}. Please try a different URL.", None
+    except requests.exceptions.RequestException as e:
+        return False, f"❌ Download failed: {str(e)}", None
+    except Exception as e:
+        logger.error(f"Unexpected error in download_and_upload_image: {e}")
+        return False, f"❌ Unexpected error: {str(e)}", None
+
 # Bot command handlers
 
 @bot.message_handler(commands=['start'])
@@ -1486,7 +1643,7 @@ Use the buttons below to navigate - no need to type commands!
 
 @bot.message_handler(commands=['owner_add_content'])
 def owner_add_content(message):
-    """Handle /owner_add_content command"""
+    """Handle /owner_add_content command with automatic URL processing"""
     if message.from_user.id != OWNER_ID:
         bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
         return
@@ -1495,7 +1652,16 @@ def owner_add_content(message):
         # Parse command: /owner_add_content [name] [price_stars] [file_path_or_url] [description]
         parts = message.text.split(' ', 4)
         if len(parts) < 4:
-            bot.send_message(message.chat.id, "❌ Usage: /owner_add_content [name] [price_stars] [file_path_or_url] [description]")
+            help_text = """❌ Usage: /owner_add_content [name] [price_stars] [file_path_or_url] [description]
+
+🔗 **URL Support:** External image URLs are automatically downloaded and converted to permanent Telegram file_ids!
+
+📝 **Examples:**
+• `/owner_add_content beach_photo 25 https://example.com/image.jpg Beautiful beach sunset`
+• `/owner_add_content vip_content 50 AgACAgIAAxkBAAI... Exclusive content`
+
+💡 **Supported URLs:** Any direct image URL (JPG, PNG, GIF, WebP)"""
+            bot.send_message(message.chat.id, help_text)
             return
         
         name = parts[1]
@@ -1503,21 +1669,67 @@ def owner_add_content(message):
         file_path = parts[3]
         description = parts[4] if len(parts) > 4 else "Exclusive content"
         
+        # Check if this name already exists
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT name FROM content_items WHERE name = ?', (name,))
+        existing = cursor.fetchone()
+        conn.close()
+        
+        if existing:
+            bot.send_message(message.chat.id, f"❌ Content with name '{name}' already exists! Choose a different name or use a different command to update it.")
+            return
+        
+        # Process external URLs automatically
+        processed_file_path = file_path
+        file_type_info = ""
+        
+        if file_path.startswith('http'):
+            # It's an external URL - download and convert to Telegram file_id
+            bot.send_message(message.chat.id, f"🔗 External URL detected! Converting to permanent Telegram file_id...\n\n📥 URL: {file_path}")
+            
+            success, result, file_type = download_and_upload_image(file_path, message.chat.id)
+            
+            if success:
+                processed_file_path = result  # This is now the Telegram file_id
+                file_type_info = f"\n📁 File Type: {file_type.title()}"
+                bot.send_message(message.chat.id, f"🎉 URL successfully converted to permanent Telegram file_id!\n\n🔄 Original URL: {file_path}\n✅ New File ID: {result[:50]}...")
+            else:
+                # Download failed - show error and don't save
+                bot.send_message(message.chat.id, f"💥 URL Processing Failed!\n\n{result}\n\n🔍 **Troubleshooting:**\n• Verify the URL points directly to an image\n• Check if the site allows hotlinking\n• Try a different image URL\n• Upload the file manually instead")
+                return
+        
+        # Save to database (with processed file_path)
         conn = sqlite3.connect('content_bot.db')
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT OR REPLACE INTO content_items (name, price_stars, file_path, description, created_date)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (name, price_stars, file_path, description, datetime.datetime.now().isoformat()))
+            INSERT INTO content_items (name, price_stars, file_path, description, created_date, content_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (name, price_stars, processed_file_path, description, datetime.datetime.now().isoformat(), 'browse'))
         conn.commit()
         conn.close()
         
-        bot.send_message(message.chat.id, f"✅ Content '{name}' added successfully!\n💰 Price: {price_stars} Stars\n📝 {description}")
+        # Success message with details
+        success_message = f"""✅ **CONTENT ADDED SUCCESSFULLY!** ✅
+
+📦 **Name:** {name}
+💰 **Price:** {price_stars} Stars
+📝 **Description:** {description}{file_type_info}
+🔄 **File:** {"Telegram File ID (converted from URL)" if file_path.startswith('http') else "Direct Path/ID"}
+
+🛒 **Ready for sale!** Fans can now purchase this content using:
+• Browse Content menu
+• `/buy {name}` command
+
+💡 **Note:** {("Original URL was automatically converted to a permanent Telegram file_id to prevent hotlinking issues!" if file_path.startswith('http') else "File is ready for delivery!")}"""
+        
+        bot.send_message(message.chat.id, success_message, parse_mode='Markdown')
         
     except ValueError:
-        bot.send_message(message.chat.id, "❌ Invalid price. Please enter a number for Stars.")
+        bot.send_message(message.chat.id, "❌ Invalid price! Please enter a number for Stars.\n\nExample: `/owner_add_content my_content 25 https://example.com/image.jpg Description here`")
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Error adding content: {str(e)}")
+        logger.error(f"Error in owner_add_content: {e}")
+        bot.send_message(message.chat.id, f"❌ Error adding content: {str(e)}\n\nPlease check your command format and try again.")
 
 @bot.message_handler(commands=['owner_delete_content'])
 def owner_delete_content(message):
@@ -1773,18 +1985,61 @@ Or type skip to use a default description.
         save_uploaded_content(session)
 
 def save_uploaded_content(session):
-    """Save the uploaded content to database and finish the flow"""
+    """Save the uploaded content to database and finish the flow with automatic URL processing"""
     try:
-        conn = sqlite3.connect('content_bot.db')
-        cursor = conn.cursor()
-        
         # Check if this is VIP content
         content_type = session.get('content_type', 'browse')
+        
+        # Process external URLs automatically before saving
+        processed_file_path = session['file_path']
+        file_type_info = ""
+        url_conversion_note = ""
+        
+        if session['file_path'] and session['file_path'].startswith('http'):
+            # It's an external URL - download and convert to Telegram file_id
+            bot.send_message(OWNER_ID, f"🔗 External URL detected in guided upload! Converting to permanent Telegram file_id...\n\n📥 URL: {session['file_path']}")
+            
+            success, result, file_type = download_and_upload_image(session['file_path'], OWNER_ID)
+            
+            if success:
+                processed_file_path = result  # This is now the Telegram file_id
+                file_type_info = f" ({file_type.title()})"
+                url_conversion_note = "\n\n🔄 **URL Conversion:** Original external URL was automatically converted to a permanent Telegram file_id to prevent hotlinking issues!"
+                bot.send_message(OWNER_ID, f"🎉 URL successfully converted to permanent Telegram file_id!\n\n✅ New File ID: {result[:50]}...")
+            else:
+                # Download failed - notify user and don't save
+                error_message = f"""💥 **URL Processing Failed!**
+
+{result}
+
+🔍 **What happened:** The external URL could not be downloaded and converted to a Telegram file_id.
+
+📋 **Content Details:**
+• Name: {session['name']}
+• Price: {session['price']} Stars
+• Description: {session['description']}
+• Failed URL: {session['file_path']}
+
+🛠️ **Next Steps:**
+• Try uploading the file directly instead of using a URL
+• Use a different image URL that allows downloading
+• Check if the URL is accessible and points to an image file"""
+                
+                bot.send_message(OWNER_ID, error_message)
+                
+                # Clear upload session since we can't proceed
+                if OWNER_ID in upload_sessions:
+                    del upload_sessions[OWNER_ID]
+                return
+        
+        # Save to database (with processed file_path)
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
         
         cursor.execute('''
             INSERT INTO content_items (name, price_stars, file_path, description, created_date, content_type)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (session['name'], session['price'], session['file_path'], session['description'], datetime.datetime.now().isoformat(), content_type))
+        ''', (session['name'], session['price'], processed_file_path, session['description'], datetime.datetime.now().isoformat(), content_type))
         conn.commit()
         conn.close()
         
@@ -1796,12 +2051,12 @@ def save_uploaded_content(session):
 📦 <b>Name:</b> {session['name']}
 💰 <b>Price:</b> {session['price']} Stars
 📝 <b>Description:</b> {session['description']}
-📁 <b>Type:</b> {session.get('file_type', 'File')} (VIP Exclusive)
+📁 <b>Type:</b> {session.get('file_type', 'File')}{file_type_info} (VIP Exclusive)
 
 🎉 Your VIP content is now live! VIP members get FREE access.
 Non-VIP users can purchase VIP subscriptions to access this content.
 
-💡 VIP content generates higher revenue through subscriptions!
+💡 VIP content generates higher revenue through subscriptions!{url_conversion_note}
 """
         else:
             success_text = f"""
@@ -1810,13 +2065,13 @@ Non-VIP users can purchase VIP subscriptions to access this content.
 📦 <b>Name:</b> {session['name']}
 💰 <b>Price:</b> {session['price']} Stars
 📝 <b>Description:</b> {session['description']}
-📁 <b>Type:</b> {session.get('file_type', 'File')}
+📁 <b>Type:</b> {session.get('file_type', 'File')}{file_type_info}
 
 Your content is now available for purchase! Fans can buy it using:
 • The browse content menu
 • /buy {session['name']} command
 
-🛒 Content will be delivered automatically after payment.
+🛒 Content will be delivered automatically after payment.{url_conversion_note}
 """
         
         markup = types.InlineKeyboardMarkup()
