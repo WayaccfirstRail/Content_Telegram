@@ -2236,6 +2236,7 @@ VIP members get FREE access to all VIP-only content.
     if vip_count > 0:
         markup.add(types.InlineKeyboardButton(f"📋 Manage VIP Content ({vip_count})", callback_data="vip_manage_content"))
     
+    markup.add(types.InlineKeyboardButton("💎 VIP Members", callback_data="owner_list_vips"))
     markup.add(types.InlineKeyboardButton("⚙️ VIP Settings", callback_data="vip_settings"))
     markup.add(types.InlineKeyboardButton("📊 VIP Analytics", callback_data="vip_analytics"))
     markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
@@ -2728,6 +2729,17 @@ Your teaser is now live! Non-VIP users will see this when they use /teaser.
                 'text': '/vip'
             })
             vip_command(fake_message)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "owner_list_vips":
+        if call.from_user.id == OWNER_ID:
+            # Create fake message object for the owner_list_vips function
+            fake_message = type('obj', (object,), {
+                'chat': call.message.chat,
+                'from_user': call.from_user,
+                'text': '/owner_list_vips'
+            })
+            owner_list_vips(fake_message)
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     elif call.data == "vip_add_content":
