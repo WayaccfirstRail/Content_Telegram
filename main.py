@@ -398,6 +398,89 @@ Browse our exclusive content catalog and treat yourself to something special!
     
     bot.send_message(chat_id, library_text, reply_markup=markup, parse_mode='HTML')
 
+def show_analytics_dashboard(chat_id):
+    """Show comprehensive analytics dashboard"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    
+    # Get user statistics
+    cursor.execute('SELECT COUNT(*) FROM users')
+    total_users = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM users WHERE last_interaction >= ?', (datetime.datetime.now() - datetime.timedelta(days=7)).isoformat())
+    active_users_7d = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM users WHERE total_stars_spent > 0')
+    paying_users = cursor.fetchone()[0]
+    
+    # Get VIP statistics
+    cursor.execute('SELECT COUNT(*) FROM vip_subscriptions WHERE is_active = 1')
+    active_vips = cursor.fetchone()[0]
+    
+    # Get content statistics
+    cursor.execute('SELECT COUNT(*) FROM content_items WHERE content_type = ?', ('browse',))
+    browse_content_count = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM content_items WHERE content_type = ?', ('vip',))
+    vip_content_count = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM teasers')
+    teaser_count = cursor.fetchone()[0]
+    
+    # Get revenue statistics
+    cursor.execute('SELECT SUM(total_stars_spent) FROM users')
+    total_revenue = cursor.fetchone()[0] or 0
+    
+    cursor.execute('SELECT AVG(total_stars_spent) FROM users WHERE total_stars_spent > 0')
+    avg_spent = cursor.fetchone()[0] or 0
+    
+    # Get top customers
+    cursor.execute('''
+        SELECT first_name, username, total_stars_spent, interaction_count
+        FROM users 
+        WHERE total_stars_spent > 0 
+        ORDER BY total_stars_spent DESC 
+        LIMIT 5
+    ''')
+    top_customers = cursor.fetchall()
+    
+    conn.close()
+    
+    analytics_text = f"""📊 <b>ANALYTICS DASHBOARD</b> 📊
+
+👥 <b>User Statistics:</b>
+• Total Users: {total_users:,}
+• Active (7 days): {active_users_7d:,}
+• Paying Customers: {paying_users:,}
+• VIP Members: {active_vips:,}
+
+💰 <b>Revenue:</b>
+• Total Revenue: {total_revenue:,} Stars
+• Average per Customer: {avg_spent:.0f} Stars
+• Conversion Rate: {(paying_users/max(total_users,1)*100):.1f}%
+
+📱 <b>Content:</b>
+• Browse Content: {browse_content_count}
+• VIP Content: {vip_content_count}
+• Teasers: {teaser_count}
+
+🏆 <b>Top Customers:</b>"""
+    
+    if top_customers:
+        for i, (first_name, username, spent, interactions) in enumerate(top_customers):
+            safe_name = (first_name or 'N/A').replace('<', '&lt;').replace('>', '&gt;')
+            safe_username = (username or 'none').replace('<', '&lt;').replace('>', '&gt;')
+            analytics_text += f"\n{i+1}. {safe_name} (@{safe_username}) - {spent} Stars"
+    else:
+        analytics_text += "\nNo paying customers yet."
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("👥 View All Users", callback_data="owner_list_users"))
+    markup.add(types.InlineKeyboardButton("💎 VIP Analytics", callback_data="vip_analytics"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Owner Menu", callback_data="owner_help"))
+    
+    bot.send_message(chat_id, analytics_text, reply_markup=markup, parse_mode='HTML')
+
 def get_ai_response(message_text):
     """Get AI-style response based on message content"""
     conn = sqlite3.connect('content_bot.db')
@@ -490,16 +573,16 @@ def start_vip_upload_session(chat_id, user_id):
 Send me the file you want to add as VIP content:
 
 📱 <b>Supported Files:</b>
-• Photos (JPG, PNG, GIF)
+• Photos (JPG, PNG, etc.)
 • Videos (MP4, MOV, AVI)
-• Documents (PDF, ZIP, etc.)
+• Animated GIFs
 
 🎯 <b>Tips:</b>
-• Upload high-quality content
+• Upload high-quality visual content only
 • VIP members get FREE access
 • Non-VIP users need subscription
 
-📂 Just send the file when ready!
+📂 Just send the photo/video when ready!
 """
     
     markup = types.InlineKeyboardMarkup()
@@ -527,14 +610,12 @@ def handle_vip_file_upload(message, file_id, file_type):
         filename = f"vip_video_{timestamp}"
     elif file_type.lower() == "gif":
         filename = f"vip_gif_{timestamp}"
-    elif file_type.lower() == "document":
-        filename = f"vip_document_{timestamp}"
+    # Documents not supported for VIP content
     
     # Try to extract original filename for better defaults
     if message.content_type == 'video' and hasattr(message.video, 'file_name') and message.video.file_name:
         filename = message.video.file_name.split('.')[0]
-    elif message.content_type == 'document' and hasattr(message.document, 'file_name') and message.document.file_name:
-        filename = message.document.file_name.split('.')[0]
+    # Document handling removed for VIP content
     
     # Clean filename (replace spaces with underscores, keep alphanumeric)
     safe_filename = ''.join(c if c.isalnum() or c == '_' else '_' for c in filename.lower())
@@ -1791,6 +1872,30 @@ This will be shown to non-VIP users when they use /teaser command.
     
     bot.send_message(message.chat.id, upload_text, reply_markup=markup)
 
+@bot.message_handler(content_types=['photo', 'video', 'animation'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'vip_content' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_file')
+def handle_vip_upload_files(message):
+    """Handle VIP content file uploads - photos, videos, and animations only"""
+    logger.info(f"VIP upload handler triggered - Content type: {message.content_type}, Session: {upload_sessions.get(OWNER_ID, 'None')}")
+    
+    # Get file information
+    file_id = None
+    file_type = None
+    
+    if message.content_type == 'photo':
+        file_id = message.photo[-1].file_id  # Get highest resolution
+        file_type = "Photo"
+    elif message.content_type == 'video':
+        file_id = message.video.file_id
+        file_type = "Video"
+    elif message.content_type == 'animation':
+        file_id = message.animation.file_id
+        file_type = "GIF"
+    
+    if file_id and file_type:
+        handle_vip_file_upload(message, file_id, file_type)
+    else:
+        bot.send_message(message.chat.id, "❌ Unsupported file type for VIP content. Please send photos, videos, or GIFs only.")
+
 @bot.message_handler(content_types=['photo', 'video', 'document', 'animation'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_file')
 def handle_teaser_upload(message):
     """Handle teaser file upload from owner"""
@@ -1871,6 +1976,16 @@ Type your description:
         markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="cancel_teaser_upload"))
         
         bot.send_message(message.chat.id, desc_text, reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'vip_content' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_name')
+def handle_vip_name_message(message):
+    """Handle VIP content name input from message"""
+    handle_vip_name_input(message)
+
+@bot.message_handler(func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'vip_content' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_description')
+def handle_vip_description_message(message):
+    """Handle VIP content description input from message"""
+    handle_vip_description_input(message)
 
 @bot.message_handler(func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_description')
 def handle_teaser_description(message):
@@ -2375,6 +2490,7 @@ def show_content_edit_interface(chat_id, content_name):
     
     bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML')
 
+
 def show_teaser_management_menu(chat_id):
     """Show Teaser Management section menu"""
     menu_text = """
@@ -2483,30 +2599,6 @@ Choose an action below to configure bot settings:
 
 # Owner VIP Management Commands
 
-@bot.message_handler(commands=['owner_set_vip_price'])
-def owner_set_vip_price(message):
-    """Handle /owner_set_vip_price command"""
-    if message.from_user.id != OWNER_ID:
-        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
-        return
-    
-    parts = message.text.split(' ', 1)
-    if len(parts) < 2:
-        current_price = get_vip_settings('vip_price_stars') or '399'
-        bot.send_message(message.chat.id, f"❌ Usage: /owner_set_vip_price [price_in_stars]\n\nCurrent VIP price: {current_price} Stars")
-        return
-    
-    try:
-        new_price = int(parts[1])
-        if new_price <= 0:
-            bot.send_message(message.chat.id, "❌ Price must be a positive number!")
-            return
-        
-        update_vip_settings('vip_price_stars', str(new_price))
-        bot.send_message(message.chat.id, f"✅ VIP price updated to {new_price} Stars/month")
-        
-    except ValueError:
-        bot.send_message(message.chat.id, "❌ Invalid price. Please enter a number.")
 
 @bot.message_handler(commands=['owner_vip_analytics'])
 def owner_vip_analytics(message):
@@ -2903,6 +2995,207 @@ def owner_list_vips(message):
         bot.send_message(message.chat.id, vip_text, parse_mode='HTML')
     else:
         bot.send_message(message.chat.id, "💎 No active VIP members yet.")
+
+@bot.message_handler(commands=['owner_set_vip_price'])
+def owner_set_vip_price(message):
+    """Handle /owner_set_vip_price command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    try:
+        # Parse command: /owner_set_vip_price [price]
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.send_message(message.chat.id, "❌ Usage: <code>/owner_set_vip_price [price_in_stars]</code>\nExample: <code>/owner_set_vip_price 399</code>", parse_mode='HTML')
+            return
+        
+        new_price = int(parts[1])
+        
+        if new_price < 1 or new_price > 2500:
+            bot.send_message(message.chat.id, "❌ Price must be between 1 and 2500 Stars.")
+            return
+        
+        # Update VIP price setting
+        update_vip_settings('vip_price_stars', str(new_price))
+        
+        bot.send_message(message.chat.id, f"✅ VIP subscription price updated to {new_price} Stars!")
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid price. Please enter a number.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error updating VIP price: {str(e)}")
+
+@bot.message_handler(commands=['owner_set_vip_duration'])
+def owner_set_vip_duration(message):
+    """Handle /owner_set_vip_duration command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    try:
+        # Parse command: /owner_set_vip_duration [days]
+        parts = message.text.split()
+        if len(parts) != 2:
+            bot.send_message(message.chat.id, "❌ Usage: <code>/owner_set_vip_duration [days]</code>\nExample: <code>/owner_set_vip_duration 30</code>", parse_mode='HTML')
+            return
+        
+        new_duration = int(parts[1])
+        
+        if new_duration < 1 or new_duration > 365:
+            bot.send_message(message.chat.id, "❌ Duration must be between 1 and 365 days.")
+            return
+        
+        # Update VIP duration setting
+        update_vip_settings('vip_duration_days', str(new_duration))
+        
+        bot.send_message(message.chat.id, f"✅ VIP subscription duration updated to {new_duration} days!")
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid duration. Please enter a number.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error updating VIP duration: {str(e)}")
+
+@bot.message_handler(commands=['owner_set_vip_description'])
+def owner_set_vip_description(message):
+    """Handle /owner_set_vip_description command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    try:
+        # Parse command: /owner_set_vip_description [description]
+        parts = message.text.split(' ', 1)
+        if len(parts) != 2:
+            bot.send_message(message.chat.id, "❌ Usage: <code>/owner_set_vip_description [description]</code>\nExample: <code>/owner_set_vip_description Premium VIP access with exclusive content</code>", parse_mode='HTML')
+            return
+        
+        new_description = parts[1].strip()
+        
+        if len(new_description) < 5 or len(new_description) > 200:
+            bot.send_message(message.chat.id, "❌ Description must be between 5 and 200 characters.")
+            return
+        
+        # Update VIP description setting
+        update_vip_settings('vip_description', new_description)
+        
+        bot.send_message(message.chat.id, f"✅ VIP description updated to: {new_description}")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error updating VIP description: {str(e)}")
+
+@bot.message_handler(commands=['owner_edit_price'])
+def owner_edit_price(message):
+    """Handle /owner_edit_price command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    try:
+        # Parse command: /owner_edit_price [content_name] [new_price]
+        parts = message.text.split()
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "❌ Usage: <code>/owner_edit_price [content_name] [new_price]</code>\nExample: <code>/owner_edit_price photo_set_1 75</code>", parse_mode='HTML')
+            return
+        
+        content_name = parts[1]
+        new_price = int(parts[2])
+        
+        if new_price < 0 or new_price > 2500:
+            bot.send_message(message.chat.id, "❌ Price must be between 0 and 2500 Stars.")
+            return
+        
+        # Update content price
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('UPDATE content_items SET price_stars = ? WHERE name = ?', (new_price, content_name))
+        updated_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if updated_count > 0:
+            bot.send_message(message.chat.id, f"✅ Price for '{content_name}' updated to {new_price} Stars!")
+        else:
+            bot.send_message(message.chat.id, f"❌ Content '{content_name}' not found.")
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid price. Please enter a number.")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error updating price: {str(e)}")
+
+@bot.message_handler(commands=['owner_edit_description'])
+def owner_edit_description(message):
+    """Handle /owner_edit_description command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    try:
+        # Parse command: /owner_edit_description [content_name] [new_description]
+        parts = message.text.split(' ', 2)
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "❌ Usage: <code>/owner_edit_description [content_name] [new_description]</code>\nExample: <code>/owner_edit_description photo_set_1 Amazing exclusive photo collection</code>", parse_mode='HTML')
+            return
+        
+        content_name = parts[1]
+        new_description = parts[2].strip()
+        
+        if len(new_description) < 5 or len(new_description) > 500:
+            bot.send_message(message.chat.id, "❌ Description must be between 5 and 500 characters.")
+            return
+        
+        # Update content description
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('UPDATE content_items SET description = ? WHERE name = ?', (new_description, content_name))
+        updated_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if updated_count > 0:
+            bot.send_message(message.chat.id, f"✅ Description for '{content_name}' updated successfully!")
+        else:
+            bot.send_message(message.chat.id, f"❌ Content '{content_name}' not found.")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error updating description: {str(e)}")
+
+@bot.message_handler(commands=['owner_edit_file_path'])
+def owner_edit_file_path(message):
+    """Handle /owner_edit_file_path command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    try:
+        # Parse command: /owner_edit_file_path [content_name] [new_file_path]
+        parts = message.text.split(' ', 2)
+        if len(parts) != 3:
+            bot.send_message(message.chat.id, "❌ Usage: <code>/owner_edit_file_path [content_name] [new_file_path]</code>\nExample: <code>/owner_edit_file_path photo_set_1 https://example.com/newphoto.jpg</code>", parse_mode='HTML')
+            return
+        
+        content_name = parts[1]
+        new_file_path = parts[2].strip()
+        
+        if len(new_file_path) < 5:
+            bot.send_message(message.chat.id, "❌ File path too short. Please provide a valid file path or URL.")
+            return
+        
+        # Update content file path
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('UPDATE content_items SET file_path = ? WHERE name = ?', (new_file_path, content_name))
+        updated_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if updated_count > 0:
+            bot.send_message(message.chat.id, f"✅ File path for '{content_name}' updated successfully!")
+        else:
+            bot.send_message(message.chat.id, f"❌ Content '{content_name}' not found.")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error updating file path: {str(e)}")
 
 # Callback query handlers
 
@@ -3309,6 +3602,33 @@ Add a description that VIP members will see:
                 show_delete_content_menu(call.message.chat.id)
             else:
                 bot.send_message(call.message.chat.id, f"❌ Failed to delete content '{content_name}'.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    # Edit Content field handlers
+    elif call.data.startswith("edit_price_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("edit_price_", "")
+            bot.send_message(call.message.chat.id, f"💰 To edit price for '{content_name}', use:\n<code>/owner_edit_price {content_name} [new_price]</code>\n\nExample: <code>/owner_edit_price {content_name} 50</code>", parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("edit_description_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("edit_description_", "")
+            bot.send_message(call.message.chat.id, f"📝 To edit description for '{content_name}', use:\n<code>/owner_edit_description {content_name} [new_description]</code>\n\nExample: <code>/owner_edit_description {content_name} Amazing exclusive content!</code>", parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("edit_file_path_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("edit_file_path_", "")
+            bot.send_message(call.message.chat.id, f"📁 To edit file path for '{content_name}', use:\n<code>/owner_edit_file_path {content_name} [new_file_path]</code>\n\nExample: <code>/owner_edit_file_path {content_name} https://example.com/newfile.jpg</code>", parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    # Analytics Dashboard handler
+    elif call.data == "analytics_dashboard":
+        if call.from_user.id == OWNER_ID:
+            show_analytics_dashboard(call.message.chat.id)
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     
