@@ -253,6 +253,25 @@ def get_teasers():
     conn.close()
     return teasers
 
+def get_teasers_with_id():
+    """Get all teasers with IDs for management"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, file_path, file_type, description, created_date FROM teasers ORDER BY created_date DESC')
+    teasers = cursor.fetchall()
+    conn.close()
+    return teasers
+
+def delete_teaser(teaser_id):
+    """Delete a teaser by ID"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM teasers WHERE id = ?', (teaser_id,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count > 0
+
 def add_teaser(file_path, file_type, description):
     """Add a teaser to the database"""
     conn = sqlite3.connect('content_bot.db')
@@ -932,7 +951,11 @@ def handle_file_upload(message):
     if message.from_user.id != OWNER_ID:
         return  # Only owner can upload content
     
-    # Check if we're in an upload session
+    # Check if we're in a teaser upload session - if so, silently return to let teaser handler process it
+    if OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser':
+        return
+    
+    # Check if we're in a regular upload session
     if OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID]['step'] != 'waiting_for_file':
         bot.send_message(message.chat.id, "📤 To upload content, start with `/owner_upload` command first!")
         return
@@ -1235,6 +1258,73 @@ Your teaser is now live! Non-VIP users will see this when they use /teaser.
     if OWNER_ID in upload_sessions:
         del upload_sessions[OWNER_ID]
 
+@bot.message_handler(commands=['owner_list_teasers'])
+def owner_list_teasers(message):
+    """Handle /owner_list_teasers command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    teasers = get_teasers_with_id()
+    
+    if not teasers:
+        bot.send_message(message.chat.id, "📭 No teasers found. Upload your first teaser with /owner_upload_teaser!")
+        return
+    
+    teaser_list = "🎬 **YOUR TEASERS** 🎬\n\n"
+    
+    for i, (teaser_id, file_path, file_type, description, created_date) in enumerate(teasers[:10]):
+        # Parse creation date
+        try:
+            date_obj = datetime.datetime.fromisoformat(created_date)
+            formatted_date = date_obj.strftime("%Y-%m-%d %H:%M")
+        except:
+            formatted_date = created_date
+        
+        teaser_list += f"**ID: {teaser_id}** | {file_type.title()}\n"
+        teaser_list += f"📝 {description[:50]}{'...' if len(description) > 50 else ''}\n"
+        teaser_list += f"📅 {formatted_date}\n"
+        teaser_list += f"🗑️ Delete: `/owner_delete_teaser {teaser_id}`\n\n"
+    
+    if len(teasers) > 10:
+        teaser_list += f"... and {len(teasers) - 10} more teasers\n\n"
+    
+    teaser_list += "💡 **Tips:**\n"
+    teaser_list += "• Most recent teaser is shown first to users\n"
+    teaser_list += "• Use `/owner_delete_teaser [ID]` to remove a teaser\n"
+    teaser_list += "• Upload new teasers with `/owner_upload_teaser`"
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🎬 Upload New Teaser", callback_data="start_teaser_upload"))
+    markup.add(types.InlineKeyboardButton("🔧 Owner Menu", callback_data="owner_help"))
+    
+    bot.send_message(message.chat.id, teaser_list, reply_markup=markup, parse_mode='Markdown')
+
+@bot.message_handler(commands=['owner_delete_teaser'])
+def owner_delete_teaser_command(message):
+    """Handle /owner_delete_teaser command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    parts = message.text.split(' ', 1)
+    if len(parts) < 2:
+        bot.send_message(message.chat.id, "❌ Usage: /owner_delete_teaser [ID]\n\n💡 Use /owner_list_teasers to see teaser IDs.")
+        return
+    
+    try:
+        teaser_id = int(parts[1])
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid teaser ID. Please provide a valid number.\n\n💡 Use /owner_list_teasers to see teaser IDs.")
+        return
+    
+    success = delete_teaser(teaser_id)
+    
+    if success:
+        bot.send_message(message.chat.id, f"✅ Teaser ID {teaser_id} deleted successfully!")
+    else:
+        bot.send_message(message.chat.id, f"❌ Teaser ID {teaser_id} not found.")
+
 @bot.message_handler(commands=['owner_list_users'])
 def owner_list_users(message):
     """Handle /owner_list_users command - show only paying customers"""
@@ -1412,7 +1502,10 @@ def owner_help(message):
         types.InlineKeyboardButton("🎬 Upload Teaser", callback_data="start_teaser_upload")
     )
     markup.add(
-        types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content"),
+        types.InlineKeyboardButton("📝 Manage Teasers", callback_data="owner_list_teasers"),
+        types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content")
+    )
+    markup.add(
         types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users")
     )
     
@@ -1608,6 +1701,28 @@ def handle_callback_query(call):
     elif call.data.startswith("vip_get_"):
         item_name = call.data.replace("vip_get_", "")
         deliver_vip_content(call.message.chat.id, call.from_user.id, item_name)
+    elif call.data == "owner_list_teasers":
+        if call.from_user.id != OWNER_ID:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+        else:
+            # Create fake message object for the owner_list_teasers function
+            fake_message = type('obj', (object,), {
+                'chat': call.message.chat,
+                'from_user': call.from_user,
+                'message_id': call.message.message_id
+            })
+            owner_list_teasers(fake_message)
+    elif call.data == "owner_help":
+        if call.from_user.id != OWNER_ID:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+        else:
+            # Create fake message object for the owner_help function
+            fake_message = type('obj', (object,), {
+                'chat': call.message.chat,
+                'from_user': call.from_user,
+                'message_id': call.message.message_id
+            })
+            owner_help(fake_message)
     elif call.data == "owner_add_content":
         if call.from_user.id != OWNER_ID:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
