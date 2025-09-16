@@ -29,6 +29,9 @@ if OWNER_ID == 0:
 # Initialize bot
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# Dictionary to store temporary upload data for guided content creation
+upload_sessions = {}
+
 # Database setup
 def init_database():
     """Initialize SQLite database with required tables"""
@@ -334,12 +337,6 @@ def help_command(message):
     help_text = """
 📚 **HOW TO USE THIS BOT** 📚
 
-🌟 **Fan Commands:**
-• `/start` - Welcome message and introduction
-• `/teaser` - Get free preview content
-• `/buy [item]` - Purchase specific content with Stars
-• `/help` - Show this help message
-
 💬 **Natural Chat:**
 Just type anything and I'll respond! I love chatting with my fans.
 
@@ -347,14 +344,24 @@ Just type anything and I'll respond! I love chatting with my fans.
 Use Telegram Stars to purchase my exclusive content. It's safe, secure, and instant!
 
 🎯 **Quick Actions:**
-Use the buttons below messages for easy navigation.
+Use the buttons below to navigate - no need to type commands!
 
 💕 Questions? Just message me directly - I read everything!
 """
     
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🎬 View Teasers", callback_data="teasers"))
-    markup.add(types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content"))
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    # Row 1: Main actions
+    markup.add(
+        types.InlineKeyboardButton("🏠 Welcome", callback_data="cmd_start"),
+        types.InlineKeyboardButton("🎬 Free Teasers", callback_data="cmd_teaser")
+    )
+    # Row 2: Shopping
+    markup.add(
+        types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content"),
+        types.InlineKeyboardButton("💬 Ask Me Anything", callback_data="ask_question")
+    )
+    # Row 3: Help refresh
+    markup.add(types.InlineKeyboardButton("🔄 Refresh Help", callback_data="cmd_help"))
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
 
@@ -421,50 +428,283 @@ def owner_delete_content(message):
     else:
         bot.send_message(message.chat.id, f"❌ Content '{name}' not found.")
 
+@bot.message_handler(commands=['owner_upload'])
+def owner_upload_content(message):
+    """Handle /owner_upload command - start guided upload flow"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    # Initialize upload session
+    upload_sessions[OWNER_ID] = {
+        'step': 'waiting_for_file',
+        'name': None,
+        'price': None,
+        'description': None,
+        'file_path': None
+    }
+    
+    upload_text = """
+📤 **GUIDED CONTENT UPLOAD** 📤
+
+I'll help you upload new content step by step!
+
+**Step 1:** Send me the file (photo, video, or document)
+- Just upload/send the file directly to this chat
+- Supported: Photos, Videos, Documents
+
+After you send the file, I'll ask for the name, price, and description.
+
+💡 **Tip:** You can also use `/owner_add_content [name] [price] [url] [description]` for web URLs.
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload"))
+    
+    bot.send_message(message.chat.id, upload_text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.message_handler(content_types=['photo', 'video', 'document'])
+def handle_file_upload(message):
+    """Handle file uploads for content creation"""
+    if message.from_user.id != OWNER_ID:
+        return  # Only owner can upload content
+    
+    # Check if we're in an upload session
+    if OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID]['step'] != 'waiting_for_file':
+        bot.send_message(message.chat.id, "📤 To upload content, start with `/owner_upload` command first!")
+        return
+    
+    # Get file info based on content type
+    file_info = None
+    file_type = ""
+    
+    if message.content_type == 'photo':
+        file_info = bot.get_file(message.photo[-1].file_id)  # Get highest resolution
+        file_type = "Photo"
+    elif message.content_type == 'video':
+        file_info = bot.get_file(message.video.file_id)
+        file_type = "Video"
+    elif message.content_type == 'document':
+        file_info = bot.get_file(message.document.file_id)
+        file_type = "Document"
+    
+    if file_info:
+        # Store file_id instead of download URL to avoid exposing bot token
+        file_id = None
+        if message.content_type == 'photo':
+            file_id = message.photo[-1].file_id
+        elif message.content_type == 'video':
+            file_id = message.video.file_id
+        elif message.content_type == 'document':
+            file_id = message.document.file_id
+        else:
+            bot.send_message(message.chat.id, "❌ Unsupported file type. Please send a photo, video, or document.")
+            return
+        
+        upload_sessions[OWNER_ID]['file_path'] = file_id  # Store file_id instead of URL
+        upload_sessions[OWNER_ID]['file_type'] = file_type
+        upload_sessions[OWNER_ID]['step'] = 'waiting_for_name'
+        
+        # Ask for content name
+        name_text = f"""
+✅ **{file_type} uploaded successfully!**
+
+**Step 2:** What should I call this content?
+Type a unique name (no spaces, use underscores):
+
+Example: `beach_photoshoot_1` or `exclusive_video_dec`
+
+This name will be used internally to identify the content.
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload"))
+        
+        bot.send_message(message.chat.id, name_text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.message_handler(func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions)
+def handle_upload_flow(message):
+    """Handle the guided upload flow steps"""
+    if OWNER_ID not in upload_sessions:
+        return
+    
+    session = upload_sessions[OWNER_ID]
+    
+    if session['step'] == 'waiting_for_name':
+        # Validate name (no spaces, alphanumeric + underscores)
+        name = message.text.strip()
+        if not name or ' ' in name or not all(c.isalnum() or c == '_' for c in name):
+            bot.send_message(message.chat.id, "❌ Invalid name! Use only letters, numbers, and underscores (no spaces).\nExample: `beach_photos_1`")
+            return
+        
+        # Check if name already exists
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT name FROM content_items WHERE name = ?', (name,))
+        existing = cursor.fetchone()
+        conn.close()
+        
+        if existing:
+            bot.send_message(message.chat.id, f"❌ Content with name '{name}' already exists! Choose a different name.")
+            return
+        
+        session['name'] = name
+        session['step'] = 'waiting_for_price'
+        
+        price_text = f"""
+✅ **Name set:** `{name}`
+
+**Step 3:** How much should this cost?
+Enter the price in Telegram Stars (just the number):
+
+Examples: `25`, `50`, `100`
+
+💡 Typical prices:
+• Photo sets: 20-50 Stars
+• Videos: 50-200 Stars
+• Exclusive content: 100+ Stars
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload"))
+        
+        bot.send_message(message.chat.id, price_text, reply_markup=markup, parse_mode='Markdown')
+    
+    elif session['step'] == 'waiting_for_price':
+        try:
+            price = int(message.text.strip())
+            if price <= 0:
+                bot.send_message(message.chat.id, "❌ Price must be a positive number!")
+                return
+            
+            session['price'] = price
+            session['step'] = 'waiting_for_description'
+            
+            desc_text = f"""
+✅ **Price set:** {price} Stars
+
+**Step 4:** Add a description (optional)
+Write a short description that customers will see:
+
+Example: "Exclusive behind-the-scenes photos from my latest shoot"
+
+Or type `skip` to use a default description.
+"""
+            
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("⏭️ Skip Description", callback_data="skip_description"),
+                types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload")
+            )
+            
+            bot.send_message(message.chat.id, desc_text, reply_markup=markup, parse_mode='Markdown')
+            
+        except ValueError:
+            bot.send_message(message.chat.id, "❌ Invalid price! Enter just the number (e.g., 25)")
+    
+    elif session['step'] == 'waiting_for_description':
+        description = message.text.strip()
+        if description.lower() == 'skip':
+            description = f"Exclusive {session.get('file_type', 'content').lower()} content"
+        
+        session['description'] = description
+        
+        # Save content to database
+        save_uploaded_content(session)
+
+def save_uploaded_content(session):
+    """Save the uploaded content to database and finish the flow"""
+    try:
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO content_items (name, price_stars, file_path, description, created_date)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (session['name'], session['price'], session['file_path'], session['description'], datetime.datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
+        
+        # Success message
+        success_text = f"""
+🎉 **CONTENT ADDED SUCCESSFULLY!** 🎉
+
+📦 **Name:** {session['name']}
+💰 **Price:** {session['price']} Stars
+📝 **Description:** {session['description']}
+📁 **Type:** {session.get('file_type', 'File')}
+
+Your content is now available for purchase! Fans can buy it using:
+• The browse content menu
+• `/buy {session['name']}` command
+
+🛒 Content will be delivered automatically after payment.
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("📦 Add Another", callback_data="start_upload"))
+        markup.add(types.InlineKeyboardButton("👥 View Users", callback_data="owner_list_users"))
+        
+        bot.send_message(OWNER_ID, success_text, reply_markup=markup, parse_mode='Markdown')
+        
+        # Clear upload session
+        if OWNER_ID in upload_sessions:
+            del upload_sessions[OWNER_ID]
+            
+    except Exception as e:
+        bot.send_message(OWNER_ID, f"❌ Error saving content: {str(e)}")
+        if OWNER_ID in upload_sessions:
+            del upload_sessions[OWNER_ID]
+
 @bot.message_handler(commands=['owner_list_users'])
 def owner_list_users(message):
-    """Handle /owner_list_users command"""
+    """Handle /owner_list_users command - show only paying customers"""
     if message.from_user.id != OWNER_ID:
         bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
         return
     
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
+    # Only show paying customers (total_stars_spent > 0) and exclude bot user ID
     cursor.execute('''
         SELECT u.user_id, u.username, u.first_name, u.total_stars_spent, u.interaction_count, 
                CASE WHEN l.user_id IS NOT NULL THEN 'Yes' ELSE 'No' END as is_loyal
         FROM users u
         LEFT JOIN loyal_fans l ON u.user_id = l.user_id
+        WHERE u.total_stars_spent > 0 AND u.user_id != ?
         ORDER BY u.total_stars_spent DESC
-    ''')
-    users = cursor.fetchall()
+    ''', (bot.get_me().id,))
+    paying_customers = cursor.fetchall()
+    
+    # Get all customers stats for comparison
+    cursor.execute('SELECT COUNT(*), SUM(total_stars_spent) FROM users WHERE total_stars_spent > 0 AND user_id != ?', (bot.get_me().id,))
+    total_paying_customers, total_revenue = cursor.fetchone()
+    
     conn.close()
     
-    if users:
-        user_text = "👥 **FAN STATISTICS** 👥\n\n"
-        total_fans = len(users)
-        total_revenue = sum(user[3] for user in users)
+    if paying_customers:
+        user_text = "💰 **PAYING CUSTOMERS** 💰\n\n"
         
-        user_text += f"📊 Total Fans: {total_fans}\n"
-        user_text += f"💰 Total Revenue: {total_revenue} Stars\n\n"
+        user_text += f"👥 Total Paying Customers: {total_paying_customers or 0}\n"
+        user_text += f"💰 Total Revenue: {total_revenue or 0} Stars\n"
+        user_text += f"📈 Average Revenue per Customer: {(total_revenue or 0) / max(total_paying_customers or 1, 1):.1f} Stars\n\n"
         
-        for user_id, username, first_name, stars_spent, interactions, is_loyal in users[:10]:  # Show top 10
+        for user_id, username, first_name, stars_spent, interactions, is_loyal in paying_customers[:15]:  # Show top 15
             user_text += f"👤 {first_name or 'N/A'} (@{username or 'none'})\n"
             user_text += f"   💰 {stars_spent} Stars | 💬 {interactions} interactions"
             if is_loyal == 'Yes':
                 user_text += " | ⭐ LOYAL"
             user_text += f"\n   🆔 ID: {user_id}\n\n"
         
-        if len(users) > 10:
-            user_text += f"... and {len(users) - 10} more fans"
+        if len(paying_customers) > 15:
+            user_text += f"... and {len(paying_customers) - 15} more paying customers"
         
         bot.send_message(message.chat.id, user_text, parse_mode='Markdown')
     else:
-        bot.send_message(message.chat.id, "No fans yet. Share your bot to get started! 🚀")
+        bot.send_message(message.chat.id, "💰 No paying customers yet. Share your content to start earning! 🚀")
 
 @bot.message_handler(commands=['owner_analytics'])
 def owner_analytics(message):
-    """Handle /owner_analytics command"""
+    """Handle /owner_analytics command - show accurate analytics for paying customers only"""
     if message.from_user.id != OWNER_ID:
         bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
         return
@@ -472,12 +712,16 @@ def owner_analytics(message):
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
     
-    # Get overall statistics
-    cursor.execute('SELECT COUNT(*), SUM(total_stars_spent), SUM(interaction_count) FROM users')
-    total_users, total_revenue, total_interactions = cursor.fetchone()
+    # Get paying customers statistics (exclude bot)
+    cursor.execute('SELECT COUNT(*), SUM(total_stars_spent), SUM(interaction_count) FROM users WHERE total_stars_spent > 0 AND user_id != ?', (bot.get_me().id,))
+    paying_customers, total_revenue, paying_interactions = cursor.fetchone()
     
-    # Get top spenders
-    cursor.execute('SELECT first_name, username, total_stars_spent FROM users ORDER BY total_stars_spent DESC LIMIT 5')
+    # Get all users statistics for comparison (exclude bot)
+    cursor.execute('SELECT COUNT(*), SUM(interaction_count) FROM users WHERE user_id != ?', (bot.get_me().id,))
+    total_users, total_interactions = cursor.fetchone()
+    
+    # Get top spenders (only paying customers)
+    cursor.execute('SELECT first_name, username, total_stars_spent FROM users WHERE total_stars_spent > 0 AND user_id != ? ORDER BY total_stars_spent DESC LIMIT 5', (bot.get_me().id,))
     top_spenders = cursor.fetchall()
     
     # Get content performance
@@ -486,20 +730,27 @@ def owner_analytics(message):
     
     conn.close()
     
+    # Calculate conversion rate
+    conversion_rate = (paying_customers / max(total_users or 1, 1)) * 100 if total_users else 0
+    
     analytics_text = f"""
 📈 **ANALYTICS DASHBOARD** 📈
 
 📊 **Overall Stats:**
-👥 Total Fans: {total_users or 0}
+👥 Total Visitors: {total_users or 0}
+💰 Paying Customers: {paying_customers or 0}
+📈 Conversion Rate: {conversion_rate:.1f}%
 💰 Total Revenue: {total_revenue or 0} Stars
-💬 Total Interactions: {total_interactions or 0}
-📱 Average per Fan: {(total_revenue or 0) / max(total_users or 1, 1):.1f} Stars
+📱 Average per Customer: {(total_revenue or 0) / max(paying_customers or 1, 1):.1f} Stars
 
 🏆 **Top Spenders:**
 """
     
-    for i, (first_name, username, spent) in enumerate(top_spenders, 1):
-        analytics_text += f"{i}. {first_name or 'N/A'} (@{username or 'none'}): {spent} Stars\n"
+    if top_spenders:
+        for i, (first_name, username, spent) in enumerate(top_spenders, 1):
+            analytics_text += f"{i}. {first_name or 'N/A'} (@{username or 'none'}): {spent} Stars\n"
+    else:
+        analytics_text += "No paying customers yet.\n"
     
     analytics_text += f"\n🛒 **Content Catalog:**\n"
     analytics_text += f"📦 Total Items: {len(content_items)}\n"
@@ -549,11 +800,12 @@ def owner_help(message):
 🔧 **OWNER COMMANDS** 🔧
 
 📦 **Content Management:**
-• `/owner_add_content [name] [price] [url] [description]` - Add new content
+• `/owner_upload` - Guided file upload (photos/videos/documents)
+• `/owner_add_content [name] [price] [url] [description]` - Add content via URL
 • `/owner_delete_content [name]` - Remove content
 
 👥 **User Management:**
-• `/owner_list_users` - View all fan statistics
+• `/owner_list_users` - View paying customers only
 • `/owner_analytics` - Detailed analytics dashboard
 
 🤖 **Bot Configuration:**
@@ -564,15 +816,18 @@ def owner_help(message):
 • `/owner_help` - Show this help message
 
 💡 **Tips:**
-- Content URLs can be direct links or file paths
+- Upload files directly for automatic Telegram hosting
+- Analytics show only paying customers
 - AI responses support emojis and markdown
-- Analytics update in real-time
 - All changes take effect immediately
 """
     
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📦 Add Content", callback_data="owner_add_content"))
-    markup.add(types.InlineKeyboardButton("👥 View Users", callback_data="owner_list_users"))
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📤 Upload File", callback_data="start_upload"),
+        types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content")
+    )
+    markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
 
@@ -590,6 +845,12 @@ def handle_callback_query(call):
         bot.send_message(call.message.chat.id, "💬 Feel free to ask me anything! Just type your message and I'll respond personally. 😊")
     elif call.data == "help":
         help_command(call.message)
+    elif call.data == "cmd_help":
+        help_command(call.message)
+    elif call.data == "cmd_start":
+        start_command(call.message)
+    elif call.data == "cmd_teaser":
+        teaser_command(call.message)
     elif call.data == "buy_premium":
         show_content_catalog(call.message.chat.id)
     elif call.data.startswith("buy_"):
@@ -610,6 +871,33 @@ def handle_callback_query(call):
                 'from_user': call.from_user
             })
             owner_list_users(fake_message)
+    elif call.data == "cancel_upload":
+        if call.from_user.id == OWNER_ID and OWNER_ID in upload_sessions:
+            del upload_sessions[OWNER_ID]
+            bot.send_message(call.message.chat.id, "❌ Upload cancelled.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ No active upload session.")
+    elif call.data == "skip_description":
+        if call.from_user.id == OWNER_ID and OWNER_ID in upload_sessions:
+            session = upload_sessions[OWNER_ID]
+            if session['step'] == 'waiting_for_description':
+                session['description'] = f"Exclusive {session.get('file_type', 'content').lower()} content"
+                save_uploaded_content(session)
+            else:
+                bot.send_message(call.message.chat.id, "❌ Invalid step for skipping description.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ No active upload session.")
+    elif call.data == "start_upload":
+        if call.from_user.id == OWNER_ID:
+            # Create a fake message object for the owner_upload_content function
+            fake_message = type('obj', (object,), {
+                'chat': call.message.chat,
+                'from_user': call.from_user,
+                'text': '/owner_upload'
+            })
+            owner_upload_content(fake_message)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     
     # Answer callback to remove loading state
     bot.answer_callback_query(call.id)
@@ -671,8 +959,24 @@ Thank you for your purchase! Here's your exclusive content:
                         bot.send_video(message.chat.id, file_path, caption=f"🎁 {content_name}")
                     else:
                         bot.send_document(message.chat.id, file_path, caption=f"🎁 {content_name}")
+                elif len(file_path) > 50 and not file_path.startswith('/'):
+                    # It's a Telegram file_id (file_ids are long strings)
+                    try:
+                        # Try to send as photo first (most common)
+                        bot.send_photo(message.chat.id, file_path, caption=f"🎁 {content_name}")
+                    except:
+                        try:
+                            # Try as video
+                            bot.send_video(message.chat.id, file_path, caption=f"🎁 {content_name}")
+                        except:
+                            try:
+                                # Try as document
+                                bot.send_document(message.chat.id, file_path, caption=f"🎁 {content_name}")
+                            except:
+                                # Last resort - show file_id
+                                bot.send_message(message.chat.id, f"🎁 Your content: {content_name}\n\nFile ID: {file_path}\n\n⚠️ If you have trouble accessing this content, please contact me!")
                 else:
-                    # It's a file path
+                    # It's a local file path
                     with open(file_path, 'rb') as file:
                         if any(ext in file_path.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif']):
                             bot.send_photo(message.chat.id, file, caption=f"🎁 {content_name}")
@@ -681,8 +985,8 @@ Thank you for your purchase! Here's your exclusive content:
                         else:
                             bot.send_document(message.chat.id, file, caption=f"🎁 {content_name}")
             except Exception as e:
-                bot.send_message(message.chat.id, f"Content link: {file_path}\n\n⚠️ If you have trouble accessing this content, please contact me!")
-                logger.error(f"Error sending content: {e}")
+                bot.send_message(message.chat.id, f"🎁 Your content: {content_name}\n\n⚠️ There was an issue delivering your content. Please contact me and I'll send it manually!")
+                logger.error(f"Error sending content {content_name}: {e}")
             
             # Notify owner of sale
             try:
