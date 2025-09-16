@@ -516,20 +516,24 @@ def handle_vip_file_upload(message, file_id, file_type):
     session['file_type'] = file_type
     session['step'] = 'waiting_for_name'
     
-    # Extract filename for smart default
+    # Extract filename for smart default based on detected file type
     filename = "custom_content"
-    if message.content_type == 'photo':
-        filename = f"vip_photo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    elif message.content_type == 'video':
-        if hasattr(message.video, 'file_name') and message.video.file_name:
-            filename = message.video.file_name.split('.')[0]
-        else:
-            filename = f"vip_video_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    elif message.content_type == 'document':
-        if hasattr(message.document, 'file_name') and message.document.file_name:
-            filename = message.document.file_name.split('.')[0]
-        else:
-            filename = f"vip_document_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    if file_type.lower() == "photo":
+        filename = f"vip_photo_{timestamp}"
+    elif file_type.lower() == "video":
+        filename = f"vip_video_{timestamp}"
+    elif file_type.lower() == "gif":
+        filename = f"vip_gif_{timestamp}"
+    elif file_type.lower() == "document":
+        filename = f"vip_document_{timestamp}"
+    
+    # Try to extract original filename for better defaults
+    if message.content_type == 'video' and hasattr(message.video, 'file_name') and message.video.file_name:
+        filename = message.video.file_name.split('.')[0]
+    elif message.content_type == 'document' and hasattr(message.document, 'file_name') and message.document.file_name:
+        filename = message.document.file_name.split('.')[0]
     
     # Clean filename (replace spaces with underscores, keep alphanumeric)
     safe_filename = ''.join(c if c.isalnum() or c == '_' else '_' for c in filename.lower())
@@ -940,6 +944,7 @@ I'm so excited to have you here! This is where I share my most intimate and excl
     markup.add(types.InlineKeyboardButton("🌟 VIP Access", callback_data="vip_access"))
     markup.add(types.InlineKeyboardButton("🎬 View Teasers", callback_data="teasers"))
     markup.add(types.InlineKeyboardButton("📂 My Content", callback_data="my_content"))
+    markup.add(types.InlineKeyboardButton("💎 VIP Content Library", callback_data="vip_content_catalog"))
     markup.add(types.InlineKeyboardButton("ℹ️ Help", callback_data="help"))
     
     bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
@@ -1383,11 +1388,13 @@ Use the buttons below to navigate - no need to type commands!
         types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content"),
         types.InlineKeyboardButton("💬 Ask Me Anything", callback_data="ask_question")
     )
-    # Row 3: My Content and Help refresh
+    # Row 3: My Content and VIP Library
     markup.add(
         types.InlineKeyboardButton("📂 My Content", callback_data="my_content"),
-        types.InlineKeyboardButton("🔄 Refresh Help", callback_data="cmd_help")
+        types.InlineKeyboardButton("💎 VIP Library", callback_data="vip_content_catalog")
     )
+    # Row 4: Help refresh
+    markup.add(types.InlineKeyboardButton("🔄 Refresh Help", callback_data="cmd_help"))
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
 
@@ -1509,7 +1516,28 @@ def handle_file_upload(message):
         file_type = "Video"
     elif message.content_type == 'document':
         file_info = bot.get_file(message.document.file_id)
-        file_type = "Document"
+        # Check if document is actually a video or gif
+        if hasattr(message.document, 'file_name') and message.document.file_name:
+            file_name = message.document.file_name.lower()
+            if file_name.endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm')):
+                file_type = "Video"
+            elif file_name.endswith(('.gif')):
+                file_type = "GIF"
+            elif file_name.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                file_type = "Photo"
+            else:
+                file_type = "Document"
+        else:
+            # Check MIME type as fallback
+            mime_type = getattr(message.document, 'mime_type', '')
+            if mime_type.startswith('video/'):
+                file_type = "Video"
+            elif mime_type == 'image/gif':
+                file_type = "GIF"
+            elif mime_type.startswith('image/'):
+                file_type = "Photo"
+            else:
+                file_type = "Document"
     
     if file_info:
         # Store file_id instead of download URL to avoid exposing bot token
@@ -1753,7 +1781,7 @@ This will be shown to non-VIP users when they use /teaser command.
     
     bot.send_message(message.chat.id, upload_text, reply_markup=markup)
 
-@bot.message_handler(content_types=['photo', 'video'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser')
+@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser')
 def handle_teaser_upload(message):
     """Handle teaser file upload from owner"""
     session = upload_sessions[OWNER_ID]
@@ -1771,12 +1799,42 @@ def handle_teaser_upload(message):
             file_id = message.video.file_id
             file_type = 'video'
             session['file_type'] = 'video'
+        elif message.document:
+            file_id = message.document.file_id
+            # Detect actual file type for documents
+            if hasattr(message.document, 'file_name') and message.document.file_name:
+                file_name = message.document.file_name.lower()
+                if file_name.endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm')):
+                    file_type = 'video'
+                    session['file_type'] = 'video'
+                elif file_name.endswith(('.gif')):
+                    file_type = 'gif'
+                    session['file_type'] = 'gif'
+                elif file_name.endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                    file_type = 'photo'
+                    session['file_type'] = 'photo'
+                else:
+                    file_type = None  # Unsupported document type
+            else:
+                # Check MIME type as fallback
+                mime_type = getattr(message.document, 'mime_type', '')
+                if mime_type.startswith('video/'):
+                    file_type = 'video'
+                    session['file_type'] = 'video'
+                elif mime_type == 'image/gif':
+                    file_type = 'gif'
+                    session['file_type'] = 'gif'
+                elif mime_type.startswith('image/'):
+                    file_type = 'photo'
+                    session['file_type'] = 'photo'
+                else:
+                    file_type = None  # Unsupported document type
         
         if file_id and file_type:
             session['file_id'] = file_id
             session['step'] = 'waiting_for_description'
         else:
-            bot.send_message(message.chat.id, "❌ Please send a photo or video file.")
+            bot.send_message(message.chat.id, "❌ Please send a photo, video, or GIF file. Supported formats: JPG, PNG, MP4, GIF, MOV, AVI.")
             return
         
         # Ask for description
@@ -2117,10 +2175,131 @@ Choose an action below to manage your content:
         types.InlineKeyboardButton("📤 Upload Content", callback_data="start_upload"),
         types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content")
     )
-    markup.add(types.InlineKeyboardButton("❌ Delete Content", callback_data="show_delete_content_help"))
+    markup.add(
+        types.InlineKeyboardButton("✏️ Edit Content", callback_data="show_edit_content_menu"),
+        types.InlineKeyboardButton("❌ Delete Content", callback_data="show_delete_content_help")
+    )
     markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
     
     bot.send_message(chat_id, menu_text, reply_markup=markup, parse_mode='Markdown')
+
+def show_edit_content_menu(chat_id):
+    """Show Edit Content menu with all content items as buttons"""
+    # Get all content items (both browse and VIP types)
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT name, price_stars, description, content_type, created_date FROM content_items ORDER BY created_date DESC')
+    items = cursor.fetchall()
+    conn.close()
+    
+    if not items:
+        empty_text = """
+✏️ <b>EDIT CONTENT</b> ✏️
+
+📭 <b>No content found!</b>
+
+Add some content first to be able to edit it.
+"""
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("📤 Upload Content", callback_data="start_upload"))
+        markup.add(types.InlineKeyboardButton("🔙 Back to Content Management", callback_data="content_management_menu"))
+        
+        bot.send_message(chat_id, empty_text, reply_markup=markup, parse_mode='HTML')
+        return
+    
+    edit_text = f"""
+✏️ <b>EDIT CONTENT</b> ✏️
+
+📝 <b>Select content to edit:</b>
+
+Found {len(items)} content item(s). Click on any item below to edit its details:
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for name, price, description, content_type, created_date in items:
+        # Format the display text
+        try:
+            date_obj = datetime.datetime.fromisoformat(created_date)
+            formatted_date = date_obj.strftime("%b %d")
+        except:
+            formatted_date = "N/A"
+        
+        # Truncate long descriptions
+        short_desc = description[:25] + "..." if len(description) > 25 else description
+        
+        # Add content type indicator
+        type_indicator = "💎" if content_type == "vip" else "🛒"
+        
+        # Create button text with details
+        button_text = f"{type_indicator} {name} | {price}⭐ | {formatted_date}"
+        
+        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"edit_content_{name}"))
+    
+    markup.add(types.InlineKeyboardButton("🔙 Back to Content Management", callback_data="content_management_menu"))
+    
+    bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML')
+
+def show_content_edit_interface(chat_id, content_name):
+    """Show edit interface for a specific content item"""
+    # Get content details
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT name, price_stars, file_path, description, content_type, created_date FROM content_items WHERE name = ?', (content_name,))
+    content = cursor.fetchone()
+    conn.close()
+    
+    if not content:
+        bot.send_message(chat_id, f"❌ Content '{content_name}' not found.")
+        return
+    
+    name, price, file_path, description, content_type, created_date = content
+    
+    # Format creation date
+    try:
+        date_obj = datetime.datetime.fromisoformat(created_date)
+        formatted_date = date_obj.strftime("%Y-%m-%d %H:%M")
+    except:
+        formatted_date = created_date
+    
+    # Escape HTML special characters
+    safe_name = name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    safe_description = description.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    
+    # Content type indicator
+    type_indicator = "💎 VIP" if content_type == "vip" else "🛒 Browse"
+    
+    edit_text = f"""
+✏️ <b>EDIT CONTENT</b> ✏️
+
+📝 <b>Content Details:</b>
+
+<b>Name:</b> {safe_name}
+<b>Type:</b> {type_indicator}
+<b>Price:</b> {price} Stars
+<b>Created:</b> {formatted_date}
+
+<b>Description:</b>
+{safe_description}
+
+<b>File Path:</b> {file_path[:50]}{"..." if len(file_path) > 50 else ""}
+
+💡 <b>What would you like to edit?</b>
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton(f"💰 Edit Price ({price} Stars)", callback_data=f"edit_price_{name}"))
+    markup.add(types.InlineKeyboardButton("📝 Edit Description", callback_data=f"edit_description_{name}"))
+    markup.add(types.InlineKeyboardButton("📁 Edit File Path", callback_data=f"edit_file_path_{name}"))
+    
+    # Add delete option
+    markup.add(types.InlineKeyboardButton(f"🗑️ Delete {name}", callback_data=f"confirm_delete_content_{name}"))
+    
+    # Navigation buttons
+    markup.add(types.InlineKeyboardButton("🔙 Back to Edit Menu", callback_data="show_edit_content_menu"))
+    markup.add(types.InlineKeyboardButton("🏠 Content Management", callback_data="content_management_menu"))
+    
+    bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML')
 
 def show_teaser_management_menu(chat_id):
     """Show Teaser Management section menu"""
@@ -2135,10 +2314,67 @@ Choose an action below to manage your teasers:
         types.InlineKeyboardButton("🎬 Upload Teaser", callback_data="start_teaser_upload"),
         types.InlineKeyboardButton("📝 Manage Teasers", callback_data="owner_list_teasers")
     )
-    markup.add(types.InlineKeyboardButton("❌ Delete Teaser", callback_data="show_delete_teaser_help"))
+    markup.add(types.InlineKeyboardButton("❌ Delete Teaser", callback_data="show_delete_teaser_menu"))
     markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
     
     bot.send_message(chat_id, menu_text, reply_markup=markup, parse_mode='Markdown')
+
+def show_delete_teaser_menu(chat_id):
+    """Show Delete Teaser menu with all teasers as buttons"""
+    teasers = get_teasers_with_id()
+    
+    if not teasers:
+        empty_text = """
+🎬 <b>DELETE TEASER</b> 🎬
+
+📭 <b>No teasers found!</b>
+
+Upload some teasers first to be able to delete them.
+"""
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🎬 Upload Teaser", callback_data="start_teaser_upload"))
+        markup.add(types.InlineKeyboardButton("🔙 Back to Teaser Management", callback_data="teaser_management_menu"))
+        
+        bot.send_message(chat_id, empty_text, reply_markup=markup, parse_mode='HTML')
+        return
+    
+    delete_text = f"""
+🎬 <b>DELETE TEASER</b> 🎬
+
+🗑️ <b>Select teaser to delete:</b>
+
+Found {len(teasers)} teaser(s). Click on any teaser below to delete it:
+
+⚠️ <b>Warning:</b> This action cannot be undone!
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for teaser_id, file_path, file_type, description, created_date in teasers[:10]:
+        # Format creation date
+        try:
+            date_obj = datetime.datetime.fromisoformat(created_date)
+            formatted_date = date_obj.strftime("%b %d, %H:%M")
+        except:
+            formatted_date = "N/A"
+        
+        # Truncate long descriptions
+        short_desc = description[:30] + "..." if len(description) > 30 else description
+        
+        # Add file type indicator
+        type_icon = "📷" if file_type == "photo" else "🎥" if file_type == "video" else "📄"
+        
+        # Create button text with details
+        button_text = f"{type_icon} ID:{teaser_id} | {short_desc} | {formatted_date}"
+        
+        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"delete_teaser_{teaser_id}"))
+    
+    if len(teasers) > 10:
+        delete_text += f"\n⚠️ <b>Note:</b> Showing first 10 teasers only.\n"
+    
+    markup.add(types.InlineKeyboardButton("🔙 Back to Teaser Management", callback_data="teaser_management_menu"))
+    
+    bot.send_message(chat_id, delete_text, reply_markup=markup, parse_mode='HTML')
 
 def show_user_management_menu(chat_id):
     """Show User Management section menu"""
@@ -2915,6 +3151,38 @@ Add a description that VIP members will see:
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     
+    # Edit Content handlers
+    elif call.data == "show_edit_content_menu":
+        if call.from_user.id == OWNER_ID:
+            show_edit_content_menu(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("edit_content_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("edit_content_", "")
+            show_content_edit_interface(call.message.chat.id, content_name)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("confirm_delete_content_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("confirm_delete_content_", "")
+            # Delete the content
+            conn = sqlite3.connect('content_bot.db')
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM content_items WHERE name = ?', (content_name,))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                bot.send_message(call.message.chat.id, f"✅ Content '{content_name}' deleted successfully!")
+                # Go back to edit content menu
+                show_edit_content_menu(call.message.chat.id)
+            else:
+                bot.send_message(call.message.chat.id, f"❌ Failed to delete content '{content_name}'.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
     # Section menu handlers
     elif call.data == "content_management_menu":
         if call.from_user.id == OWNER_ID:
@@ -2943,9 +3211,23 @@ Add a description that VIP members will see:
             bot.send_message(call.message.chat.id, "📦 To delete content, use: `/owner_delete_content [name]`\n\n💡 Tip: Use `/owner_list_content` to see available content names.")
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
-    elif call.data == "show_delete_teaser_help":
+    elif call.data == "show_delete_teaser_menu":
         if call.from_user.id == OWNER_ID:
-            bot.send_message(call.message.chat.id, "🎬 To delete a teaser, use: `/owner_delete_teaser [ID]`\n\n💡 Tip: Use `/owner_list_teasers` first to see teaser IDs.")
+            show_delete_teaser_menu(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("delete_teaser_"):
+        if call.from_user.id == OWNER_ID:
+            teaser_id = int(call.data.replace("delete_teaser_", ""))
+            # Delete the teaser
+            success = delete_teaser(teaser_id)
+            
+            if success:
+                bot.send_message(call.message.chat.id, f"✅ Teaser ID {teaser_id} deleted successfully!")
+                # Go back to delete teaser menu
+                show_delete_teaser_menu(call.message.chat.id)
+            else:
+                bot.send_message(call.message.chat.id, f"❌ Teaser ID {teaser_id} not found.")
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     elif call.data == "show_set_responses_help":
@@ -3180,9 +3462,33 @@ def health():
     return {"status": "healthy", "bot": "running"}
 
 def run_bot():
-    """Run the bot with infinity polling"""
-    logger.info("Starting bot polling...")
-    bot.infinity_polling(none_stop=True)
+    """Run the bot with infinity polling and better error handling"""
+    import time
+    
+    max_retries = 5
+    retry_delay = 5  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Starting bot polling (attempt {attempt + 1}/{max_retries})...")
+            bot.infinity_polling(
+                none_stop=True,
+                timeout=30,  # 30 second timeout for requests
+                skip_pending=True  # Skip pending messages on restart
+            )
+            break  # If we reach here, polling started successfully
+            
+        except Exception as e:
+            logger.error(f"Bot polling failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error("Max retries reached. Bot polling could not be started.")
+                # Don't exit, let Flask continue running for health checks
+                break
 
 def main():
     """Main function to initialize and start the bot"""
