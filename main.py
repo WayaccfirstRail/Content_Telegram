@@ -1363,6 +1363,8 @@ def help_command(message):
     add_or_update_user(message.from_user)
     
     help_text = """
+😈 **Ready to Play? ELy La Bella** 
+
 **HOW TO USE THIS BOT**
 
 💬 **VIP Exclusive Chat:**
@@ -2240,6 +2242,65 @@ Found {len(items)} content item(s). Click on any item below to edit its details:
     
     bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML')
 
+def show_delete_content_menu(chat_id):
+    """Show Delete Content menu with all content items as buttons"""
+    # Get all content items (both browse and VIP types)
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT name, price_stars, description, content_type, created_date FROM content_items ORDER BY created_date DESC')
+    items = cursor.fetchall()
+    conn.close()
+    
+    if not items:
+        empty_text = """
+🗑️ <b>DELETE CONTENT</b> 🗑️
+
+📭 <b>No content found!</b>
+
+You don't have any content to delete yet. Add some content first!
+"""
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("📤 Upload Content", callback_data="start_upload"))
+        markup.add(types.InlineKeyboardButton("🔙 Back to Content Management", callback_data="content_management_menu"))
+        
+        bot.send_message(chat_id, empty_text, reply_markup=markup, parse_mode='HTML')
+        return
+    
+    delete_text = f"""
+🗑️ <b>DELETE CONTENT</b> 🗑️
+
+⚠️ <b>Select content to DELETE:</b>
+
+Found {len(items)} content item(s). Click on any item below to permanently delete it:
+
+<b>⚠️ WARNING:</b> This action cannot be undone!
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for name, price, description, content_type, created_date in items:
+        # Format the display text
+        try:
+            date_obj = datetime.datetime.fromisoformat(created_date)
+            formatted_date = date_obj.strftime("%b %d")
+        except:
+            formatted_date = "N/A"
+        
+        # Truncate long descriptions
+        short_desc = description[:25] + "..." if len(description) > 25 else description
+        
+        # Add content type indicator
+        type_indicator = "💎" if content_type == "vip" else "🛒"
+        
+        # Create button text with details
+        button_text = f"🗑️ {type_indicator} {name} | {price}⭐ | {formatted_date}"
+        
+        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"confirm_delete_{name}"))
+    
+    markup.add(types.InlineKeyboardButton("🔙 Back to Content Management", callback_data="content_management_menu"))
+    
+    bot.send_message(chat_id, delete_text, reply_markup=markup, parse_mode='HTML')
+
 def show_content_edit_interface(chat_id, content_name):
     """Show edit interface for a specific content item"""
     # Get content details
@@ -2401,7 +2462,7 @@ Choose an action below to configure bot settings:
 """
     
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("✏️ Set AI Responses", callback_data="show_set_responses_help"))
+    markup.add(types.InlineKeyboardButton("✏️ Set Responses", callback_data="show_set_responses_help"))
     markup.add(types.InlineKeyboardButton("⚙️ Other Settings", callback_data="show_other_settings_help"))
     markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
     
@@ -2849,10 +2910,46 @@ def handle_callback_query(call):
     elif call.data == "my_content":
         show_my_content(call.message.chat.id, call.from_user.id)
     elif call.data == "ask_question":
-        fomo_message = """
+        # Check if user has VIP or has purchased content
+        user_id = call.from_user.id
+        vip_status = check_vip_status(user_id)
+        purchased_content = get_user_purchased_content(user_id)
+        
+        # User qualifies if they have VIP or have bought content
+        user_qualifies = vip_status['is_vip'] or len(purchased_content) > 0
+        
+        if user_qualifies:
+            # Show contact info for qualifying users
+            contact_message = """
+💬 **Direct Contact Available** 💬
+
+🎉 Congratulations! As a valued customer, you can now contact me directly:
+
+👤 **Contact me:** @elylabella_official
+
+💕 I personally read and respond to all messages from my supporters!
+
+🌟 **What you can expect:**
+• Personal responses from me
+• Behind-the-scenes conversations
+• Priority attention to your messages
+• Exclusive chat access
+
+✨ Thank you for being an amazing supporter!
+"""
+            markup = types.InlineKeyboardMarkup()
+            # Create URL button for direct contact
+            markup.add(types.InlineKeyboardButton("💬 Message @elylabella_official", url="https://t.me/elylabella_official"))
+            markup.add(types.InlineKeyboardButton("🛒 Browse More Content", callback_data="browse_content"))
+            markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+            
+            bot.send_message(call.message.chat.id, contact_message, reply_markup=markup)
+        else:
+            # Show VIP upgrade message for non-qualifying users
+            fomo_message = """
 🚫 **Chat Access Restricted** 🚫
 
-💎 This feature is exclusive to VIP members only!
+💎 This feature is exclusive to VIP members and content purchasers only!
 
 🌟 **You're missing out on:**
 • Direct personal conversations with me
@@ -2860,13 +2957,13 @@ def handle_callback_query(call):
 • Exclusive behind-the-scenes chat access
 • Personal attention and custom interactions
 
-💰 Upgrade to VIP now and unlock unlimited chat access!
+💰 Upgrade to VIP or purchase content to unlock direct chat access!
 """
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP Now", callback_data="vip_access"))
-        markup.add(types.InlineKeyboardButton("🛒 Browse Content Instead", callback_data="browse_content"))
-        
-        bot.send_message(call.message.chat.id, fomo_message, reply_markup=markup)
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP Now", callback_data="vip_access"))
+            markup.add(types.InlineKeyboardButton("🛒 Browse Content Instead", callback_data="browse_content"))
+            
+            bot.send_message(call.message.chat.id, fomo_message, reply_markup=markup)
     elif call.data == "help":
         help_command(call.message)
     elif call.data == "cmd_help":
@@ -3182,6 +3279,25 @@ Add a description that VIP members will see:
                 bot.send_message(call.message.chat.id, f"❌ Failed to delete content '{content_name}'.")
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("confirm_delete_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("confirm_delete_", "")
+            # Delete the content
+            conn = sqlite3.connect('content_bot.db')
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM content_items WHERE name = ?', (content_name,))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                bot.send_message(call.message.chat.id, f"✅ Content '{content_name}' deleted successfully!")
+                # Go back to delete content menu to show updated list
+                show_delete_content_menu(call.message.chat.id)
+            else:
+                bot.send_message(call.message.chat.id, f"❌ Failed to delete content '{content_name}'.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     
     # Section menu handlers
     elif call.data == "content_management_menu":
@@ -3208,7 +3324,7 @@ Add a description that VIP members will see:
     # Helper callbacks for section menus
     elif call.data == "show_delete_content_help":
         if call.from_user.id == OWNER_ID:
-            bot.send_message(call.message.chat.id, "📦 To delete content, use: `/owner_delete_content [name]`\n\n💡 Tip: Use `/owner_list_content` to see available content names.")
+            show_delete_content_menu(call.message.chat.id)
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     elif call.data == "show_delete_teaser_menu":
