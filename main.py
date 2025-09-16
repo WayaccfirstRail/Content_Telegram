@@ -6,6 +6,8 @@ import telebot
 from telebot import types
 from flask import Flask
 import logging
+import socket
+import ipaddress
 import requests
 import tempfile
 from urllib.parse import urlparse
@@ -998,6 +1000,47 @@ def deliver_vip_content(chat_id, user_id, content_name):
     except Exception as e:
         logger.error(f"Error notifying owner of VIP access: {e}")
 
+def validate_url_security(url):
+    """
+    Validate URL to prevent SSRF attacks
+    
+    Args:
+        url (str): URL to validate
+        
+    Returns:
+        tuple: (is_safe, error_message)
+    """
+    try:
+        parsed = urlparse(url)
+        
+        # Only allow http and https
+        if parsed.scheme.lower() not in ('http', 'https'):
+            return False, "Only HTTP and HTTPS URLs are allowed"
+        
+        # Resolve hostname to IP address
+        hostname = parsed.hostname
+        if not hostname:
+            return False, "Invalid hostname"
+        
+        # Get IP address
+        ip_str = socket.gethostbyname(hostname)
+        ip = ipaddress.ip_address(ip_str)
+        
+        # Block private, loopback, link-local, and multicast addresses
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+            return False, "Access to internal/private networks is not allowed"
+        
+        # Block common metadata endpoints
+        if hostname.lower() in ['metadata.google.internal', '169.254.169.254', 'metadata']:
+            return False, "Access to metadata endpoints is not allowed"
+        
+        return True, ""
+        
+    except socket.gaierror:
+        return False, "Could not resolve hostname"
+    except Exception as e:
+        return False, f"URL validation error: {str(e)}"
+
 def download_and_upload_image(url, chat_id=None):
     """
     Download an image from an external URL and upload it to Telegram to get a permanent file_id.
@@ -1010,10 +1053,15 @@ def download_and_upload_image(url, chat_id=None):
         tuple: (success, file_id_or_error_message, file_type)
     """
     try:
-        # Validate URL
+        # Validate URL format
         parsed_url = urlparse(url)
         if not parsed_url.scheme or not parsed_url.netloc:
             return False, "❌ Invalid URL format", None
+        
+        # Security validation to prevent SSRF
+        is_safe, security_error = validate_url_security(url)
+        if not is_safe:
+            return False, f"❌ Security error: {security_error}", None
         
         # Send progress notification if chat_id provided
         if chat_id:
