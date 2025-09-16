@@ -356,7 +356,7 @@ def show_my_content(chat_id, user_id):
 🛒 <b>Ready to get started?</b>
 Browse our exclusive content catalog and treat yourself to something special!
 
-💡 <b>Tip:</b> VIP members get FREE access to all content!
+💡 <b>Secret:</b> VIP members unlock exclusive content that regular users will never see... What are they experiencing that you're missing? 👀
 """
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content"))
@@ -930,7 +930,6 @@ I'm so excited to have you here! This is where I share my most intimate and excl
 ✨ What you can do here:
 • Get FREE teasers and previews
 • Purchase exclusive content with Telegram Stars
-• Chat with me personally
 • Access special fan-only material
 
 💫 Quick actions:
@@ -1229,6 +1228,10 @@ def show_content_catalog(chat_id, user_id=None):
         
         markup = types.InlineKeyboardMarkup()
         
+        # Add VIP buttons at the top first
+        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP", callback_data="vip_access"))
+        markup.add(types.InlineKeyboardButton("💎 Access VIP Content Library", callback_data="vip_content_catalog"))
+        
         for name, price, description in items:
             # Escape HTML special characters to prevent parsing errors
             safe_name = name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -1248,9 +1251,7 @@ def show_content_catalog(chat_id, user_id=None):
             
             catalog_text += f"📝 {safe_description}\n\n"
         
-        # Add VIP access option
-        markup.add(types.InlineKeyboardButton("💎 Access VIP Content Library", callback_data="vip_content_catalog"))
-        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP", callback_data="vip_access"))
+        # VIP buttons already added at the top
         
         # Add back button
         markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
