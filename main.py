@@ -105,6 +105,36 @@ def init_database():
         )
     ''')
     
+    # VIP subscriptions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vip_subscriptions (
+            user_id INTEGER PRIMARY KEY,
+            start_date TEXT,
+            expiry_date TEXT,
+            is_active INTEGER DEFAULT 1,
+            total_payments INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
+    
+    # VIP settings table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vip_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
+    
+    # Insert default VIP settings
+    vip_settings = [
+        ('vip_price_stars', '399'),
+        ('vip_duration_days', '30'),
+        ('vip_description', 'Premium VIP access with exclusive content and direct chat')
+    ]
+    
+    for key, value in vip_settings:
+        cursor.execute('INSERT OR IGNORE INTO vip_settings (key, value) VALUES (?, ?)', (key, value))
+    
     # Insert default AI responses
     default_responses = [
         ('greeting', 'Hey there! 😊 Thanks for reaching out! I love connecting with my fans. What\'s on your mind?'),
@@ -203,6 +233,201 @@ def get_ai_response(message_text):
     conn.close()
     return response
 
+# VIP Management Functions
+
+def check_vip_status(user_id):
+    """Check if user has active VIP subscription"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT start_date, expiry_date, is_active 
+        FROM vip_subscriptions 
+        WHERE user_id = ? AND is_active = 1
+    ''', (user_id,))
+    
+    subscription = cursor.fetchone()
+    conn.close()
+    
+    if not subscription:
+        return {'is_vip': False, 'days_left': 0, 'expired': False}
+    
+    start_date, expiry_date, is_active = subscription
+    
+    # Parse expiry date
+    try:
+        expiry_datetime = datetime.datetime.fromisoformat(expiry_date)
+        now = datetime.datetime.now()
+        
+        if expiry_datetime > now:
+            days_left = (expiry_datetime - now).days
+            return {'is_vip': True, 'days_left': days_left, 'expired': False}
+        else:
+            # Subscription expired, deactivate it
+            deactivate_expired_vip(user_id)
+            return {'is_vip': False, 'days_left': 0, 'expired': True}
+    except:
+        return {'is_vip': False, 'days_left': 0, 'expired': False}
+
+def deactivate_expired_vip(user_id):
+    """Deactivate expired VIP subscription"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE vip_subscriptions SET is_active = 0 WHERE user_id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+
+def get_vip_settings(key):
+    """Get VIP setting value"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT value FROM vip_settings WHERE key = ?', (key,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+def update_vip_settings(key, value):
+    """Update VIP setting"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR REPLACE INTO vip_settings (key, value) VALUES (?, ?)', (key, value))
+    conn.commit()
+    conn.close()
+
+def activate_vip_subscription(user_id):
+    """Activate or renew VIP subscription for user"""
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    
+    # Get VIP duration from settings
+    duration_days = int(get_vip_settings('vip_duration_days') or 30)
+    
+    now = datetime.datetime.now()
+    
+    # Check if user already has an active subscription
+    cursor.execute('SELECT expiry_date FROM vip_subscriptions WHERE user_id = ? AND is_active = 1', (user_id,))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # Extend existing subscription
+        try:
+            current_expiry = datetime.datetime.fromisoformat(existing[0])
+            # If still active, extend from expiry date, otherwise from now
+            extend_from = max(current_expiry, now)
+        except:
+            extend_from = now
+        
+        new_expiry = extend_from + datetime.timedelta(days=duration_days)
+        
+        cursor.execute('''
+            UPDATE vip_subscriptions 
+            SET expiry_date = ?, is_active = 1, total_payments = total_payments + 1
+            WHERE user_id = ?
+        ''', (new_expiry.isoformat(), user_id))
+    else:
+        # Create new subscription
+        expiry_date = now + datetime.timedelta(days=duration_days)
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO vip_subscriptions 
+            (user_id, start_date, expiry_date, is_active, total_payments)
+            VALUES (?, ?, ?, 1, 1)
+        ''', (user_id, now.isoformat(), expiry_date.isoformat()))
+    
+    conn.commit()
+    conn.close()
+    
+    return duration_days
+
+def deliver_vip_content(chat_id, user_id, content_name):
+    """Deliver content for free to VIP users"""
+    # Verify VIP status
+    vip_status = check_vip_status(user_id)
+    if not vip_status['is_vip']:
+        bot.send_message(chat_id, "❌ VIP membership required! Please upgrade to VIP to access this content for free.")
+        return
+    
+    # Get content details
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT file_path, description FROM content_items WHERE name = ?', (content_name,))
+    content = cursor.fetchone()
+    conn.close()
+    
+    if not content:
+        bot.send_message(chat_id, f"❌ Content '{content_name}' not found.")
+        return
+    
+    file_path, description = content
+    
+    # Send VIP access message
+    vip_message = f"""
+💎 <b>VIP EXCLUSIVE ACCESS</b> 💎
+
+🎉 Here's your free content as a VIP member!
+
+<b>{content_name}</b>
+{description}
+
+💕 Thank you for being an amazing VIP supporter!
+⏰ Your VIP expires in {vip_status['days_left']} days
+"""
+    
+    bot.send_message(chat_id, vip_message, parse_mode='HTML')
+    
+    # Send the actual content (same logic as paid content delivery)
+    try:
+        if file_path.startswith('http'):
+            # It's a URL
+            if any(ext in file_path.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                bot.send_photo(chat_id, file_path, caption=f"💎 VIP: {content_name}")
+            elif any(ext in file_path.lower() for ext in ['.mp4', '.mov', '.avi']):
+                bot.send_video(chat_id, file_path, caption=f"💎 VIP: {content_name}")
+            else:
+                bot.send_document(chat_id, file_path, caption=f"💎 VIP: {content_name}")
+        elif len(file_path) > 50 and not file_path.startswith('/'):
+            # It's a Telegram file_id
+            try:
+                bot.send_photo(chat_id, file_path, caption=f"💎 VIP: {content_name}")
+            except:
+                try:
+                    bot.send_video(chat_id, file_path, caption=f"💎 VIP: {content_name}")
+                except:
+                    try:
+                        bot.send_document(chat_id, file_path, caption=f"💎 VIP: {content_name}")
+                    except:
+                        bot.send_message(chat_id, f"💎 Your VIP content: {content_name}\n\nFile ID: {file_path}\n\n⚠️ If you have trouble accessing this content, please contact me!")
+        else:
+            # It's a local file path
+            with open(file_path, 'rb') as file:
+                if any(ext in file_path.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif']):
+                    bot.send_photo(chat_id, file, caption=f"💎 VIP: {content_name}")
+                elif any(ext in file_path.lower() for ext in ['.mp4', '.mov', '.avi']):
+                    bot.send_video(chat_id, file, caption=f"💎 VIP: {content_name}")
+                else:
+                    bot.send_document(chat_id, file, caption=f"💎 VIP: {content_name}")
+    except Exception as e:
+        bot.send_message(chat_id, f"💎 Your VIP content: {content_name}\n\n⚠️ There was an issue delivering your content. Please contact me and I'll send it manually!")
+        logger.error(f"Error sending VIP content {content_name}: {e}")
+    
+    # Notify owner of VIP content access
+    try:
+        user_data = get_user_data(user_id)
+        if user_data:
+            username = user_data[1] or "none"
+            first_name = user_data[2] or "N/A"
+            
+            bot.send_message(OWNER_ID, f"""
+💎 <b>VIP CONTENT ACCESS</b>
+
+👤 VIP Member: {first_name} (@{username})
+🎁 Content: {content_name}
+🆔 User ID: {user_id}
+⏰ VIP expires in {vip_status['days_left']} days
+""", parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Error notifying owner of VIP access: {e}")
+
 # Bot command handlers
 
 @bot.message_handler(commands=['start'])
@@ -210,9 +435,16 @@ def start_command(message):
     """Handle /start command"""
     add_or_update_user(message.from_user)
     
+    # Check VIP status
+    vip_status = check_vip_status(message.from_user.id)
+    vip_text = ""
+    if vip_status['is_vip']:
+        days_left = vip_status['days_left']
+        vip_text = f"\n💎 VIP MEMBER (expires in {days_left} days)\n"
+    
     welcome_text = f"""
 🌟 Welcome to my exclusive content hub, {message.from_user.first_name}! 🌟
-
+{vip_text}
 I'm so excited to have you here! This is where I share my most intimate and exclusive content with my amazing fans like you.
 
 ✨ What you can do here:
@@ -224,25 +456,50 @@ I'm so excited to have you here! This is where I share my most intimate and excl
 💫 Quick actions:
 """
     
-    # Create inline keyboard
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("🎬 View Teasers", callback_data="teasers"),
-        types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content")
-    )
-    markup.add(
-        types.InlineKeyboardButton("💬 Ask Me Anything", callback_data="ask_question"),
-        types.InlineKeyboardButton("ℹ️ Help", callback_data="help")
-    )
+    # Create inline keyboard with only 3 buttons in specified order
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("🌟 VIP Access", callback_data="vip_access"))
+    markup.add(types.InlineKeyboardButton("🎬 View Teasers", callback_data="teasers"))
+    markup.add(types.InlineKeyboardButton("ℹ️ Help", callback_data="help"))
     
     bot.send_message(message.chat.id, welcome_text, reply_markup=markup)
 
 @bot.message_handler(commands=['teaser'])
 def teaser_command(message):
-    """Handle /teaser command"""
+    """Handle /teaser command with VIP-exclusive content"""
     add_or_update_user(message.from_user)
     
-    teaser_text = """
+    # Check VIP status
+    vip_status = check_vip_status(message.from_user.id)
+    is_vip = vip_status['is_vip']
+    
+    if is_vip:
+        teaser_text = f"""
+💎 **VIP EXCLUSIVE TEASERS** 💎
+
+🎉 Special VIP preview just for you!
+
+*[VIP members get access to premium teasers, behind-the-scenes content, and exclusive previews not available to regular users]*
+
+🌟 **VIP Perks Active:**
+• Unlimited free access to all content
+• Exclusive VIP-only material
+• Direct personal communication priority
+• Monthly bonus content drops
+
+⏰ Your VIP expires in {vip_status['days_left']} days
+
+💕 You're absolutely amazing for being VIP! Here's what's new this week...
+
+✨ *"The best content is exclusively yours!"* ✨
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🎁 Access All VIP Content FREE", callback_data="browse_content"))
+        markup.add(types.InlineKeyboardButton("🔄 Extend VIP Membership", callback_data="vip_access"))
+        
+    else:
+        teaser_text = """
 🎬 **FREE TEASER CONTENT** 🎬
 
 Here's a little preview of what's waiting for you in my exclusive collection... 
@@ -251,12 +508,18 @@ Here's a little preview of what's waiting for you in my exclusive collection...
 
 💝 This is just a taste of what I have for my special fans. Want to see more? Check out my full content library!
 
+💡 **VIP members get:**
+• FREE access to ALL content
+• Exclusive VIP-only teasers (like this one, but better!)
+• Direct personal chat priority
+• Monthly bonus content
+
 ✨ *"The best is yet to come..."* ✨
 """
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🛒 Browse Full Content", callback_data="browse_content"))
-    markup.add(types.InlineKeyboardButton("⭐ Buy Premium Content", callback_data="buy_premium"))
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP for FREE Access", callback_data="vip_access"))
+        markup.add(types.InlineKeyboardButton("🛒 Browse Content to Purchase", callback_data="browse_content"))
     
     bot.send_message(message.chat.id, teaser_text, reply_markup=markup, parse_mode='Markdown')
 
@@ -302,8 +565,96 @@ def purchase_item(chat_id, user_id, item_name):
     else:
         bot.send_message(chat_id, f"Sorry, I couldn't find content named '{item_name}'. Use /help to see available content.")
 
-def show_content_catalog(chat_id):
-    """Show available content for purchase"""
+def show_vip_access(chat_id, user_id):
+    """Show VIP access options and current status"""
+    vip_status = check_vip_status(user_id)
+    vip_price = int(get_vip_settings('vip_price_stars') or 399)
+    vip_description = get_vip_settings('vip_description') or 'Premium VIP access with exclusive content and direct chat'
+    
+    if vip_status['is_vip']:
+        # User is already VIP
+        status_text = f"""
+💎 <b>VIP MEMBER STATUS</b> 💎
+
+🎉 You are currently a VIP member!
+⏰ <b>Expires in:</b> {vip_status['days_left']} days
+
+🌟 <b>Your VIP Benefits:</b>
+• Unlimited exclusive content access
+• Direct personal chat with me
+• Priority responses to messages
+• Special VIP-only teasers and previews
+• Monthly exclusive photo sets
+• Behind-the-scenes content
+
+💫 Want to extend your VIP membership?
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton(f"🔄 Extend VIP ({vip_price} Stars)", callback_data="buy_vip"))
+        markup.add(types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content"))
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+        
+    else:
+        # User is not VIP
+        status_text = f"""
+🌟 <b>BECOME A VIP MEMBER</b> 🌟
+
+💰 <b>Price:</b> {vip_price} Telegram Stars/month
+📅 <b>Duration:</b> 30 days
+
+💎 <b>VIP Benefits Include:</b>
+• Unlimited access to all exclusive content
+• Direct personal chat with me
+• Priority responses to all your messages
+• Special VIP-only teasers and previews
+• Monthly exclusive photo sets
+• Behind-the-scenes content and stories
+• Early access to new content
+
+✨ <b>"{vip_description}"</b>
+
+🚀 Ready to become VIP and get unlimited access?
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton(f"💎 Subscribe VIP ({vip_price} Stars)", callback_data="buy_vip"))
+        markup.add(types.InlineKeyboardButton("🎬 View Free Teasers", callback_data="teasers"))
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+    
+    bot.send_message(chat_id, status_text, reply_markup=markup, parse_mode='HTML')
+
+def purchase_vip_subscription(chat_id, user_id):
+    """Process VIP subscription purchase"""
+    vip_price = int(get_vip_settings('vip_price_stars') or 399)
+    vip_description = get_vip_settings('vip_description') or 'Premium VIP access'
+    
+    # Create invoice for VIP subscription
+    prices = [types.LabeledPrice(label="VIP Subscription", amount=vip_price)]
+    
+    bot.send_invoice(
+        chat_id=chat_id,
+        title="🌟 VIP Membership Subscription",
+        description=f"{vip_description} - 30 days unlimited access",
+        invoice_payload=f"vip_subscription_{user_id}",
+        provider_token=None,  # None for Telegram Stars
+        currency='XTR',  # Telegram Stars currency
+        prices=prices,
+        start_parameter='vip_purchase'
+    )
+
+def show_content_catalog(chat_id, user_id=None):
+    """Show available content for purchase with VIP access controls"""
+    # Get user ID if not provided (for callback compatibility)
+    if user_id is None:
+        # This is a fallback for when called from callback without user_id
+        # In practice, we should always pass user_id
+        user_id = chat_id  # Assuming direct message context
+    
+    # Check VIP status
+    vip_status = check_vip_status(user_id)
+    is_vip = vip_status['is_vip']
+    
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
     cursor.execute('SELECT name, price_stars, description FROM content_items')
@@ -311,7 +662,13 @@ def show_content_catalog(chat_id):
     conn.close()
     
     if items:
-        catalog_text = "🛒 <b>EXCLUSIVE CONTENT CATALOG</b> 🛒\n\n"
+        if is_vip:
+            catalog_text = "💎 <b>VIP EXCLUSIVE CONTENT</b> 💎\n\n"
+            catalog_text += f"🎉 As a VIP member, you have <b>FREE ACCESS</b> to all content!\n"
+            catalog_text += f"⏰ Your VIP expires in {vip_status['days_left']} days\n\n"
+        else:
+            catalog_text = "🛒 <b>EXCLUSIVE CONTENT CATALOG</b> 🛒\n\n"
+            catalog_text += "💡 <b>Tip:</b> VIP members get FREE access to all content!\n\n"
         
         markup = types.InlineKeyboardMarkup()
         
@@ -321,10 +678,22 @@ def show_content_catalog(chat_id):
             safe_description = description.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             
             catalog_text += f"✨ <b>{safe_name}</b>\n"
-            catalog_text += f"💰 {price} Stars\n"
-            catalog_text += f"📝 {safe_description}\n\n"
             
-            markup.add(types.InlineKeyboardButton(f"⭐ Buy {name} ({price} Stars)", callback_data=f"buy_{name}"))
+            if is_vip:
+                catalog_text += f"💎 <b>VIP FREE ACCESS</b>\n"
+                markup.add(types.InlineKeyboardButton(f"🎁 Get {name} (VIP FREE)", callback_data=f"vip_get_{name}"))
+            else:
+                catalog_text += f"💰 {price} Stars\n"
+                markup.add(types.InlineKeyboardButton(f"⭐ Buy {name} ({price} Stars)", callback_data=f"buy_{name}"))
+            
+            catalog_text += f"📝 {safe_description}\n\n"
+        
+        # Add VIP upgrade option for non-VIP users
+        if not is_vip:
+            markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP for FREE Access", callback_data="vip_access"))
+        
+        # Add back button
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
         
         bot.send_message(chat_id, catalog_text, reply_markup=markup, parse_mode='HTML')
     else:
@@ -835,16 +1204,149 @@ def owner_help(message):
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
 
+# Owner VIP Management Commands
+
+@bot.message_handler(commands=['owner_set_vip_price'])
+def owner_set_vip_price(message):
+    """Handle /owner_set_vip_price command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    parts = message.text.split(' ', 1)
+    if len(parts) < 2:
+        current_price = get_vip_settings('vip_price_stars') or '399'
+        bot.send_message(message.chat.id, f"❌ Usage: /owner_set_vip_price [price_in_stars]\n\nCurrent VIP price: {current_price} Stars")
+        return
+    
+    try:
+        new_price = int(parts[1])
+        if new_price <= 0:
+            bot.send_message(message.chat.id, "❌ Price must be a positive number!")
+            return
+        
+        update_vip_settings('vip_price_stars', str(new_price))
+        bot.send_message(message.chat.id, f"✅ VIP price updated to {new_price} Stars/month")
+        
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Invalid price. Please enter a number.")
+
+@bot.message_handler(commands=['owner_vip_analytics'])
+def owner_vip_analytics(message):
+    """Handle /owner_vip_analytics command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    
+    # Get VIP statistics
+    cursor.execute('SELECT COUNT(*) FROM vip_subscriptions WHERE is_active = 1')
+    active_vip_count = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM vip_subscriptions')
+    total_vip_subscriptions = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT SUM(total_payments) FROM vip_subscriptions')
+    total_vip_payments = cursor.fetchone()[0] or 0
+    
+    # Get VIP settings
+    vip_price = int(get_vip_settings('vip_price_stars') or 399)
+    total_vip_revenue = total_vip_payments * vip_price
+    
+    # Get VIP users details
+    cursor.execute('''
+        SELECT u.first_name, u.username, v.start_date, v.expiry_date, v.total_payments
+        FROM vip_subscriptions v
+        JOIN users u ON v.user_id = u.user_id
+        WHERE v.is_active = 1
+        ORDER BY v.total_payments DESC
+        LIMIT 10
+    ''')
+    active_vips = cursor.fetchall()
+    
+    conn.close()
+    
+    analytics_text = f"""
+💎 **VIP ANALYTICS DASHBOARD** 💎
+
+📊 **VIP Statistics:**
+👑 Active VIP Members: {active_vip_count}
+📈 Total VIP Subscriptions Ever: {total_vip_subscriptions}
+💰 Total VIP Payments: {total_vip_payments}
+💵 Total VIP Revenue: {total_vip_revenue} Stars
+💰 Current VIP Price: {vip_price} Stars/month
+
+🏆 **Top VIP Members:**
+"""
+    
+    for i, (first_name, username, start_date, expiry_date, payments) in enumerate(active_vips[:5], 1):
+        safe_first_name = (first_name or 'N/A').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        safe_username = (username or 'none').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        analytics_text += f"{i}. {safe_first_name} (@{safe_username}) - {payments} payments\n"
+    
+    bot.send_message(message.chat.id, analytics_text, parse_mode='HTML')
+
+@bot.message_handler(commands=['owner_list_vips'])
+def owner_list_vips(message):
+    """Handle /owner_list_vips command"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    
+    # Get all active VIP users
+    cursor.execute('''
+        SELECT u.user_id, u.first_name, u.username, v.start_date, v.expiry_date, v.total_payments
+        FROM vip_subscriptions v
+        JOIN users u ON v.user_id = u.user_id
+        WHERE v.is_active = 1
+        ORDER BY v.expiry_date DESC
+    ''')
+    vip_users = cursor.fetchall()
+    
+    conn.close()
+    
+    if vip_users:
+        vip_text = "💎 <b>ACTIVE VIP MEMBERS</b> 💎\n\n"
+        
+        for user_id, first_name, username, start_date, expiry_date, payments in vip_users:
+            safe_first_name = (first_name or 'N/A').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            safe_username = (username or 'none').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            # Calculate days left
+            try:
+                expiry_datetime = datetime.datetime.fromisoformat(expiry_date)
+                days_left = (expiry_datetime - datetime.datetime.now()).days
+                days_text = f"{days_left} days left"
+            except:
+                days_text = "Invalid date"
+            
+            vip_text += f"👤 {safe_first_name} (@{safe_username})\n"
+            vip_text += f"   ⏰ {days_text} | 💰 {payments} payments\n"
+            vip_text += f"   🆔 ID: {user_id}\n\n"
+        
+        bot.send_message(message.chat.id, vip_text, parse_mode='HTML')
+    else:
+        bot.send_message(message.chat.id, "💎 No active VIP members yet.")
+
 # Callback query handlers
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback_query(call):
     """Handle inline keyboard callbacks"""
     
-    if call.data == "teasers":
+    if call.data == "vip_access":
+        show_vip_access(call.message.chat.id, call.from_user.id)
+    elif call.data == "buy_vip":
+        purchase_vip_subscription(call.message.chat.id, call.from_user.id)
+    elif call.data == "teasers":
         teaser_command(call.message)
     elif call.data == "browse_content":
-        show_content_catalog(call.message.chat.id)
+        show_content_catalog(call.message.chat.id, call.from_user.id)
     elif call.data == "ask_question":
         bot.send_message(call.message.chat.id, "💬 Feel free to ask me anything! Just type your message and I'll respond personally. 😊")
     elif call.data == "help":
@@ -872,6 +1374,9 @@ def handle_callback_query(call):
     elif call.data.startswith("buy_"):
         item_name = call.data.replace("buy_", "")
         purchase_item(call.message.chat.id, call.from_user.id, item_name)
+    elif call.data.startswith("vip_get_"):
+        item_name = call.data.replace("vip_get_", "")
+        deliver_vip_content(call.message.chat.id, call.from_user.id, item_name)
     elif call.data == "owner_add_content":
         if call.from_user.id != OWNER_ID:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
@@ -932,7 +1437,57 @@ def successful_payment_handler(message):
     
     # Parse payload to get content info
     payload_parts = payment.invoice_payload.split('_')
-    if len(payload_parts) >= 3 and payload_parts[0] == 'content':
+    
+    # Handle VIP subscription payments
+    if len(payload_parts) >= 2 and payload_parts[0] == 'vip' and payload_parts[1] == 'subscription':
+        user_id = int(payload_parts[2])
+        
+        # Update user's total spent
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('UPDATE users SET total_stars_spent = total_stars_spent + ? WHERE user_id = ?', 
+                      (payment.total_amount, user_id))
+        conn.commit()
+        conn.close()
+        
+        # Activate VIP subscription
+        duration_days = activate_vip_subscription(user_id)
+        
+        # Send confirmation message
+        vip_welcome_message = f"""
+💎 **VIP SUBSCRIPTION ACTIVATED!** 💎
+
+🎉 Congratulations! You are now a VIP member!
+⏰ **Duration:** {duration_days} days
+💰 **Amount:** {payment.total_amount} Stars
+
+🌟 **Your VIP Benefits Are Now Active:**
+• Unlimited access to all exclusive content
+• Direct personal chat with me
+• Priority responses to all messages
+• Special VIP-only teasers and previews
+• Monthly exclusive photo sets
+• Behind-the-scenes content
+
+💫 Welcome to the VIP family! You're absolutely amazing! ✨
+
+Use the buttons below to explore your new VIP privileges:
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🛒 Browse All Content", callback_data="browse_content"))
+        markup.add(types.InlineKeyboardButton("🎬 VIP Exclusive Teasers", callback_data="teasers"))
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+        
+        bot.send_message(message.chat.id, vip_welcome_message, reply_markup=markup, parse_mode='Markdown')
+        
+        # Notify owner of new VIP subscription
+        try:
+            bot.send_message(OWNER_ID, f"💎 NEW VIP SUBSCRIPTION!\n👤 {message.from_user.first_name} (@{message.from_user.username})\n💰 {payment.total_amount} Stars\n🆔 ID: {user_id}")
+        except:
+            pass
+            
+    elif len(payload_parts) >= 3 and payload_parts[0] == 'content':
         content_name = payload_parts[1]
         user_id = int(payload_parts[2])
         
