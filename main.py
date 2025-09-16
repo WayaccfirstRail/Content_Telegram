@@ -1718,53 +1718,6 @@ def owner_set_response(message):
     
     bot.send_message(message.chat.id, f"✅ AI response for '{key}' updated successfully!")
 
-@bot.message_handler(commands=['vip'])
-def vip_command(message):
-    """Handle /vip command - VIP content management interface"""
-    if message.from_user.id != OWNER_ID:
-        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
-        return
-    
-    # Get VIP content statistics
-    vip_count = get_vip_content_count()
-    vip_content_list = get_vip_content_list()
-    
-    # Calculate total value of VIP content
-    total_value = sum(content[1] for content in vip_content_list)  # price_stars is index 1
-    
-    vip_text = f"""
-💎 <b>VIP CONTENT MANAGEMENT</b> 💎
-
-📊 <b>VIP Content Overview:</b>
-• Total VIP Content: {vip_count} items
-• Combined Value: {total_value} Stars
-• VIP Exclusive Library Status: {'Active' if vip_count > 0 else 'Empty'}
-
-🎯 <b>VIP Content Features:</b>
-• Exclusive access for VIP members only
-• Free for all VIP subscribers
-• Premium pricing for non-VIP users
-• Special VIP-only catalog section
-
-💡 <b>Management Options:</b>
-Use the buttons below to manage your VIP content library.
-"""
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    # Main VIP management button with count
-    markup.add(types.InlineKeyboardButton(f"💎 VIP Mng ({vip_count})", callback_data="vip_mng"))
-    
-    # Management options
-    markup.add(types.InlineKeyboardButton("➕ Add VIP Content", callback_data="add_vip_content"))
-    if vip_count > 0:
-        markup.add(types.InlineKeyboardButton("✏️ Edit VIP Content", callback_data="edit_vip_content"))
-        markup.add(types.InlineKeyboardButton("🗑️ Delete VIP Content", callback_data="delete_vip_content"))
-    
-    # Navigation
-    markup.add(types.InlineKeyboardButton("🔧 Owner Help", callback_data="owner_help"))
-    
-    bot.send_message(message.chat.id, vip_text, reply_markup=markup, parse_mode='HTML')
 
 @bot.message_handler(commands=['owner_help'])
 def owner_help(message):
@@ -1777,10 +1730,11 @@ def owner_help(message):
 🔧 **OWNER COMMANDS** 🔧
 
 💎 **VIP Management (PRIORITY):**
-• `/vip` - VIP content management interface
-• VIP content is exclusive to VIP subscribers
+• `/vip` - VIP content management dashboard
+• VIP content is exclusive to VIP subscribers only
 • VIP members get FREE access to all VIP content
-• Higher revenue potential through VIP subscriptions
+• Higher revenue potential through monthly subscriptions
+• Focus here first for maximum profitability!
 
 📦 **Content Management:**
 • `/owner_upload` - Guided file upload (photos/videos/documents)
@@ -1795,6 +1749,7 @@ def owner_help(message):
 👥 **User Management:**
 • `/owner_list_users` - View paying customers only
 • `/owner_analytics` - Detailed analytics dashboard
+• `/owner_list_vips` - View active VIP subscribers
 
 🤖 **Bot Configuration:**
 • `/owner_set_response [key] [text]` - Update AI responses
@@ -1803,8 +1758,9 @@ def owner_help(message):
 ℹ️ **Information:**
 • `/owner_help` - Show this help message
 
-💡 **Tips:**
+💡 **Pro Tips:**
 - Start with VIP content for premium user experience
+- VIP subscriptions generate more revenue than individual sales
 - Upload files directly for automatic Telegram hosting
 - Analytics show only paying customers
 - AI responses support emojis and markdown
@@ -1813,9 +1769,9 @@ def owner_help(message):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    # VIP Management - Priority section
+    # VIP Management - TOP PRIORITY section (reorganized to be first and prominent)
     vip_count = get_vip_content_count()
-    markup.add(types.InlineKeyboardButton(f"💎 VIP Management ({vip_count})", callback_data="cmd_vip"))
+    markup.add(types.InlineKeyboardButton(f"💎 VIP Dashboard ({vip_count})", callback_data="cmd_vip"))
     
     # Content Management
     markup.add(
@@ -1826,8 +1782,11 @@ def owner_help(message):
         types.InlineKeyboardButton("📝 Manage Teasers", callback_data="owner_list_teasers"),
         types.InlineKeyboardButton("🔗 Add URL", callback_data="owner_add_content")
     )
+    
+    # User Management  
     markup.add(
-        types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users")
+        types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"),
+        types.InlineKeyboardButton("💎 VIP Members", callback_data="owner_list_vips")
     )
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
@@ -1915,6 +1874,300 @@ def owner_vip_analytics(message):
         analytics_text += f"{i}. {safe_first_name} (@{safe_username}) - {payments} payments\n"
     
     bot.send_message(message.chat.id, analytics_text, parse_mode='HTML')
+
+@bot.message_handler(commands=['vip'])
+def vip_command(message):
+    """Handle /vip command - VIP content management dashboard"""
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    # Get VIP content statistics
+    vip_count = get_vip_content_count()
+    vip_price = get_vip_settings('vip_price_stars') or '399'
+    vip_duration = get_vip_settings('vip_duration_days') or '30'
+    
+    # Get VIP subscriber count
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM vip_subscriptions WHERE is_active = 1')
+    vip_subscribers = cursor.fetchone()[0]
+    conn.close()
+    
+    dashboard_text = f"""
+💎 <b>VIP CONTENT MANAGEMENT DASHBOARD</b> 💎
+
+📊 <b>VIP Statistics:</b>
+• VIP Content Items: {vip_count}
+• Active VIP Subscribers: {vip_subscribers}
+• VIP Price: {vip_price} Stars
+• VIP Duration: {vip_duration} days
+
+🎯 <b>VIP Management Options:</b>
+Use the buttons below to manage your VIP content and settings.
+
+💡 <b>VIP Strategy:</b>
+VIP content generates higher revenue through subscriptions.
+VIP members get FREE access to all VIP-only content.
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton(f"📦 Add VIP Content", callback_data="vip_add_content"))
+    
+    if vip_count > 0:
+        markup.add(types.InlineKeyboardButton(f"📋 Manage VIP Content ({vip_count})", callback_data="vip_manage_content"))
+    
+    markup.add(types.InlineKeyboardButton("⚙️ VIP Settings", callback_data="vip_settings"))
+    markup.add(types.InlineKeyboardButton("📊 VIP Analytics", callback_data="vip_analytics"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
+    
+    bot.send_message(message.chat.id, dashboard_text, reply_markup=markup, parse_mode='HTML')
+
+def show_vip_add_content_interface(chat_id):
+    """Show interface for adding new VIP content"""
+    add_text = """
+💎 <b>ADD VIP CONTENT</b> 💎
+
+VIP content is exclusive to subscribers and generates more revenue.
+
+📝 <b>How to add VIP content:</b>
+1. Use /owner_upload to upload files directly
+2. When setting content type, select 'VIP Only'
+
+Or use the command format:
+<code>/owner_add_vip [name] [price] [url/path] [description]</code>
+
+💡 <b>VIP Benefits:</b>
+• VIP members get FREE access to all VIP content
+• Higher revenue potential through subscriptions  
+• Exclusive feeling increases loyalty
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("📤 Upload VIP File", callback_data="start_upload"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to VIP Dashboard", callback_data="cmd_vip"))
+    
+    bot.send_message(chat_id, add_text, reply_markup=markup, parse_mode='HTML')
+
+def show_vip_content_management(chat_id):
+    """Show VIP content management interface"""
+    vip_content = get_vip_content_list()
+    
+    if not vip_content:
+        empty_text = """
+💎 <b>VIP CONTENT MANAGEMENT</b> 💎
+
+📭 <b>No VIP content found!</b>
+
+Add your first VIP content to start earning premium subscription revenue.
+"""
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("📦 Add VIP Content", callback_data="vip_add_content"))
+        markup.add(types.InlineKeyboardButton("🔙 Back to VIP Dashboard", callback_data="cmd_vip"))
+        
+        bot.send_message(chat_id, empty_text, reply_markup=markup, parse_mode='HTML')
+        return
+    
+    content_text = """
+💎 <b>VIP CONTENT MANAGEMENT</b> 💎
+
+🎯 <b>Your VIP Content:</b>
+
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for i, (name, price, file_path, description, created_date) in enumerate(vip_content[:10]):
+        # Format creation date
+        try:
+            date_obj = datetime.datetime.fromisoformat(created_date)
+            formatted_date = date_obj.strftime("%b %d")
+        except:
+            formatted_date = "N/A"
+        
+        # Truncate long descriptions
+        short_desc = description[:30] + "..." if len(description) > 30 else description
+        
+        content_text += f"<b>{i+1}. {name}</b>\n"
+        content_text += f"   💰 {price} Stars | 📅 {formatted_date}\n"
+        content_text += f"   📝 {short_desc}\n\n"
+        
+        # Add management buttons
+        markup.add(types.InlineKeyboardButton(f"✏️ Edit {name}", callback_data=f"vip_edit_{name}"))
+        markup.add(types.InlineKeyboardButton(f"🗑️ Delete {name}", callback_data=f"vip_delete_{name}"))
+    
+    if len(vip_content) > 10:
+        content_text += f"... and {len(vip_content) - 10} more items\n\n"
+    
+    content_text += "💡 <b>Tip:</b> VIP members get FREE access to all this content!"
+    
+    markup.add(types.InlineKeyboardButton("➕ Add More VIP Content", callback_data="vip_add_content"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to VIP Dashboard", callback_data="cmd_vip"))
+    
+    bot.send_message(chat_id, content_text, reply_markup=markup, parse_mode='HTML')
+
+def show_vip_settings_interface(chat_id):
+    """Show VIP settings management interface"""
+    vip_price = get_vip_settings('vip_price_stars') or '399'
+    vip_duration = get_vip_settings('vip_duration_days') or '30'
+    vip_description = get_vip_settings('vip_description') or 'Premium VIP access'
+    
+    settings_text = f"""
+⚙️ <b>VIP SETTINGS</b> ⚙️
+
+📋 <b>Current VIP Configuration:</b>
+
+💰 <b>Price:</b> {vip_price} Stars
+⏰ <b>Duration:</b> {vip_duration} days  
+📝 <b>Description:</b> {vip_description}
+
+🔧 <b>To modify settings, use these commands:</b>
+• <code>/owner_set_vip_price [amount]</code>
+• <code>/owner_set_vip_duration [days]</code>  
+• <code>/owner_set_vip_description [text]</code>
+
+💡 <b>Pricing Tips:</b>
+• 399 Stars ≈ $4 USD (current default)
+• Higher price = more exclusive feeling
+• 30-day duration balances value and recurring revenue
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Back to VIP Dashboard", callback_data="cmd_vip"))
+    
+    bot.send_message(chat_id, settings_text, reply_markup=markup, parse_mode='HTML')
+
+def show_vip_analytics(chat_id):
+    """Show VIP analytics dashboard"""
+    # Get VIP statistics
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    
+    # Active VIP subscribers
+    cursor.execute('SELECT COUNT(*) FROM vip_subscriptions WHERE is_active = 1')
+    active_vips = cursor.fetchone()[0]
+    
+    # Total VIP revenue (all time)
+    vip_price = int(get_vip_settings('vip_price_stars') or 399)
+    cursor.execute('SELECT SUM(total_payments) FROM vip_subscriptions')
+    total_payments = cursor.fetchone()[0] or 0
+    total_vip_revenue = total_payments * vip_price
+    
+    # Top VIP subscribers
+    cursor.execute('''
+        SELECT vs.user_id, u.first_name, u.username, vs.total_payments, vs.expiry_date
+        FROM vip_subscriptions vs
+        LEFT JOIN users u ON vs.user_id = u.user_id
+        WHERE vs.is_active = 1
+        ORDER BY vs.total_payments DESC
+        LIMIT 5
+    ''')
+    top_vips = cursor.fetchall()
+    
+    conn.close()
+    
+    analytics_text = f"""
+📊 <b>VIP ANALYTICS DASHBOARD</b> 📊
+
+💎 <b>VIP Statistics:</b>
+• Active Subscribers: {active_vips}
+• Total VIP Revenue: {total_vip_revenue:,} Stars
+• Average Revenue per VIP: {(total_vip_revenue // max(active_vips, 1)):,} Stars
+
+🏆 <b>Top VIP Subscribers:</b>
+"""
+    
+    if top_vips:
+        for i, (user_id, first_name, username, payments, expiry) in enumerate(top_vips):
+            safe_first_name = (first_name or "N/A").replace('<', '&lt;').replace('>', '&gt;')
+            safe_username = username or "none"
+            
+            # Calculate days left
+            try:
+                expiry_date = datetime.datetime.fromisoformat(expiry)
+                days_left = (expiry_date - datetime.datetime.now()).days
+                status = f"{days_left}d left" if days_left > 0 else "Expired"
+            except:
+                status = "Unknown"
+            
+            analytics_text += f"{i+1}. {safe_first_name} (@{safe_username})\n"
+            analytics_text += f"   💰 {payments} payments | ⏰ {status}\n\n"
+    else:
+        analytics_text += "No VIP subscribers yet.\n\n"
+    
+    analytics_text += """
+💡 <b>Growth Tips:</b>
+• Add more exclusive VIP content
+• Promote VIP benefits in teasers
+• Offer limited-time VIP discounts
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Back to VIP Dashboard", callback_data="cmd_vip"))
+    
+    bot.send_message(chat_id, analytics_text, reply_markup=markup, parse_mode='HTML')
+
+def handle_vip_content_deletion(chat_id, content_name):
+    """Handle VIP content deletion with confirmation"""
+    content = get_vip_content_by_name(content_name)
+    
+    if not content:
+        bot.send_message(chat_id, f"❌ VIP content '{content_name}' not found.")
+        return
+    
+    name, price, file_path, description, created_date = content
+    
+    confirm_text = f"""
+⚠️ <b>CONFIRM VIP CONTENT DELETION</b> ⚠️
+
+You are about to delete:
+<b>{name}</b>
+💰 Price: {price} Stars
+📝 {description}
+
+⚠️ <b>Warning:</b> This action cannot be undone!
+
+Are you sure you want to delete this VIP content?
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton(f"🗑️ Yes, Delete {name}", callback_data=f"confirm_vip_delete_{name}"))
+    markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="vip_manage_content"))
+    
+    bot.send_message(chat_id, confirm_text, reply_markup=markup, parse_mode='HTML')
+
+def show_vip_content_edit_interface(chat_id, content_name):
+    """Show VIP content edit interface"""
+    content = get_vip_content_by_name(content_name)
+    
+    if not content:
+        bot.send_message(chat_id, f"❌ VIP content '{content_name}' not found.")
+        return
+    
+    name, price, file_path, description, created_date = content
+    
+    edit_text = f"""
+✏️ <b>EDIT VIP CONTENT</b> ✏️
+
+<b>Current Details:</b>
+• Name: {name}
+• Price: {price} Stars  
+• Description: {description}
+• File: {file_path[:50]}{'...' if len(file_path) > 50 else ''}
+
+🔧 <b>Edit Commands:</b>
+• <code>/owner_edit_vip_price {name} [new_price]</code>
+• <code>/owner_edit_vip_description {name} [new_description]</code>
+• <code>/owner_edit_vip_file {name} [new_file_path]</code>
+
+💡 <b>Note:</b> Changes take effect immediately for new VIP subscribers.
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🗑️ Delete This Content", callback_data=f"vip_delete_{name}"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to VIP Content", callback_data="vip_manage_content"))
+    
+    bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML')
 
 @bot.message_handler(commands=['owner_list_vips'])
 def owner_list_vips(message):
@@ -2145,6 +2398,62 @@ Your teaser is now live! Non-VIP users will see this when they use /teaser.
                 bot.send_message(call.message.chat.id, "❌ Invalid step for skipping description.")
         else:
             bot.send_message(call.message.chat.id, "❌ No active teaser upload session.")
+    # VIP Management callbacks
+    elif call.data == "cmd_vip":
+        if call.from_user.id == OWNER_ID:
+            # Create fake message object for the vip_command function
+            fake_message = type('obj', (object,), {
+                'chat': call.message.chat,
+                'from_user': call.from_user,
+                'text': '/vip'
+            })
+            vip_command(fake_message)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "vip_add_content":
+        if call.from_user.id == OWNER_ID:
+            show_vip_add_content_interface(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "vip_manage_content":
+        if call.from_user.id == OWNER_ID:
+            show_vip_content_management(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "vip_settings":
+        if call.from_user.id == OWNER_ID:
+            show_vip_settings_interface(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "vip_analytics":
+        if call.from_user.id == OWNER_ID:
+            show_vip_analytics(call.message.chat.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("vip_delete_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("vip_delete_", "")
+            handle_vip_content_deletion(call.message.chat.id, content_name)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("vip_edit_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("vip_edit_", "")
+            show_vip_content_edit_interface(call.message.chat.id, content_name)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data.startswith("confirm_vip_delete_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("confirm_vip_delete_", "")
+            # Actually delete the VIP content
+            if delete_vip_content(content_name):
+                bot.send_message(call.message.chat.id, f"✅ VIP content '{content_name}' deleted successfully!")
+                # Go back to VIP content management
+                show_vip_content_management(call.message.chat.id)
+            else:
+                bot.send_message(call.message.chat.id, f"❌ Failed to delete VIP content '{content_name}'.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     
     # Answer callback to remove loading state
     bot.answer_callback_query(call.id)
