@@ -77,9 +77,19 @@ def init_database():
             price_stars INTEGER,
             file_path TEXT,
             description TEXT,
-            created_date TEXT
+            created_date TEXT,
+            content_type TEXT DEFAULT 'browse'
         )
     ''')
+    
+    # Add content_type column to existing content_items table if it doesn't exist
+    # This provides backward compatibility for existing databases
+    try:
+        cursor.execute("ALTER TABLE content_items ADD COLUMN content_type TEXT DEFAULT 'browse'")
+        logger.info("Added content_type column to existing content_items table")
+    except sqlite3.OperationalError:
+        # Column already exists, which is fine
+        pass
     
     # User purchases table - tracks individual content purchases for permanent access
     cursor.execute('''
@@ -173,13 +183,13 @@ def init_database():
     
     # Insert sample content
     sample_content = [
-        ('photo_set_1', 25, 'https://example.com/photo1.jpg', 'Exclusive photo set - Behind the scenes', datetime.datetime.now().isoformat()),
-        ('video_preview', 50, 'https://example.com/video1.mp4', 'Special video content just for you', datetime.datetime.now().isoformat())
+        ('photo_set_1', 25, 'https://example.com/photo1.jpg', 'Exclusive photo set - Behind the scenes', datetime.datetime.now().isoformat(), 'browse'),
+        ('video_preview', 50, 'https://example.com/video1.mp4', 'Special video content just for you', datetime.datetime.now().isoformat(), 'browse')
     ]
     
-    for name, price, path, desc, date in sample_content:
-        cursor.execute('INSERT OR IGNORE INTO content_items (name, price_stars, file_path, description, created_date) VALUES (?, ?, ?, ?, ?)', 
-                      (name, price, path, desc, date))
+    for name, price, path, desc, date, content_type in sample_content:
+        cursor.execute('INSERT OR IGNORE INTO content_items (name, price_stars, file_path, description, created_date, content_type) VALUES (?, ?, ?, ?, ?, ?)', 
+                      (name, price, path, desc, date, content_type))
     
     conn.commit()
     conn.close()
