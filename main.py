@@ -347,13 +347,13 @@ Use Telegram Stars to purchase my exclusive content. It's safe, secure, and inst
 🎯 **Quick Actions:**
 Use the buttons below to navigate - no need to type commands!
 
-💕 Questions? Just message me directly - I read everything!
+💕 Questions? Just join the VIP - I read everything - Waiting for you!
 """
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     # Row 1: Main actions
     markup.add(
-        types.InlineKeyboardButton("🏠 Welcome", callback_data="cmd_start"),
+        types.InlineKeyboardButton("🏠 VIPEntry", callback_data="cmd_start"),
         types.InlineKeyboardButton("🎬 Free Teasers", callback_data="cmd_teaser")
     )
     # Row 2: Shopping
@@ -446,23 +446,23 @@ def owner_upload_content(message):
     }
     
     upload_text = """
-📤 **GUIDED CONTENT UPLOAD** 📤
+📤 <b>GUIDED CONTENT UPLOAD</b> 📤
 
 I'll help you upload new content step by step!
 
-**Step 1:** Send me the file (photo, video, or document)
+<b>Step 1:</b> Send me the file (photo, video, or document)
 - Just upload/send the file directly to this chat
 - Supported: Photos, Videos, Documents
 
 After you send the file, I'll ask for the name, price, and description.
 
-💡 **Tip:** You can also use `/owner_add_content [name] [price] [url] [description]` for web URLs.
+💡 <b>Tip:</b> You can also use /owner_add_content [name] [price] [url] [description] for web URLs.
 """
     
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload"))
     
-    bot.send_message(message.chat.id, upload_text, reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(message.chat.id, upload_text, reply_markup=markup, parse_mode='HTML')
 
 @bot.message_handler(content_types=['photo', 'video', 'document'])
 def handle_file_upload(message):
@@ -510,10 +510,10 @@ def handle_file_upload(message):
         name_text = f"""
 ✅ **{file_type} uploaded successfully!**
 
-**Step 2:** What should I call this content?
+<b>Step 2:</b> What should I call this content?
 Type a unique name (no spaces, use underscores):
 
-Example: `beach_photoshoot_1` or `exclusive_video_dec`
+Example: beach_photoshoot_1 or exclusive_video_dec
 
 This name will be used internally to identify the content.
 """
@@ -521,7 +521,7 @@ This name will be used internally to identify the content.
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload"))
         
-        bot.send_message(message.chat.id, name_text, reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(message.chat.id, name_text, reply_markup=markup, parse_mode='HTML')
 
 @bot.message_handler(func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions)
 def handle_upload_flow(message):
@@ -535,7 +535,7 @@ def handle_upload_flow(message):
         # Validate name (no spaces, alphanumeric + underscores)
         name = message.text.strip()
         if not name or ' ' in name or not all(c.isalnum() or c == '_' for c in name):
-            bot.send_message(message.chat.id, "❌ Invalid name! Use only letters, numbers, and underscores (no spaces).\nExample: `beach_photos_1`")
+            bot.send_message(message.chat.id, "❌ Invalid name! Use only letters, numbers, and underscores (no spaces).\nExample: beach_photos_1")
             return
         
         # Check if name already exists
@@ -553,12 +553,12 @@ def handle_upload_flow(message):
         session['step'] = 'waiting_for_price'
         
         price_text = f"""
-✅ **Name set:** `{name}`
+✅ <b>Name set:</b> {name}
 
-**Step 3:** How much should this cost?
+<b>Step 3:</b> How much should this cost?
 Enter the price in Telegram Stars (just the number):
 
-Examples: `25`, `50`, `100`
+Examples: 25, 50, 100
 
 💡 Typical prices:
 • Photo sets: 20-50 Stars
@@ -569,7 +569,7 @@ Examples: `25`, `50`, `100`
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload"))
         
-        bot.send_message(message.chat.id, price_text, reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(message.chat.id, price_text, reply_markup=markup, parse_mode='HTML')
     
     elif session['step'] == 'waiting_for_price':
         try:
@@ -582,14 +582,14 @@ Examples: `25`, `50`, `100`
             session['step'] = 'waiting_for_description'
             
             desc_text = f"""
-✅ **Price set:** {price} Stars
+✅ <b>Price set:</b> {price} Stars
 
-**Step 4:** Add a description (optional)
+<b>Step 4:</b> Add a description (optional)
 Write a short description that customers will see:
 
 Example: "Exclusive behind-the-scenes photos from my latest shoot"
 
-Or type `skip` to use a default description.
+Or type skip to use a default description.
 """
             
             markup = types.InlineKeyboardMarkup(row_width=2)
@@ -598,7 +598,7 @@ Or type `skip` to use a default description.
                 types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_upload")
             )
             
-            bot.send_message(message.chat.id, desc_text, reply_markup=markup, parse_mode='Markdown')
+            bot.send_message(message.chat.id, desc_text, reply_markup=markup, parse_mode='HTML')
             
         except ValueError:
             bot.send_message(message.chat.id, "❌ Invalid price! Enter just the number (e.g., 25)")
@@ -627,16 +627,16 @@ def save_uploaded_content(session):
         
         # Success message
         success_text = f"""
-🎉 **CONTENT ADDED SUCCESSFULLY!** 🎉
+🎉 <b>CONTENT ADDED SUCCESSFULLY!</b> 🎉
 
-📦 **Name:** {session['name']}
-💰 **Price:** {session['price']} Stars
-📝 **Description:** {session['description']}
-📁 **Type:** {session.get('file_type', 'File')}
+📦 <b>Name:</b> {session['name']}
+💰 <b>Price:</b> {session['price']} Stars
+📝 <b>Description:</b> {session['description']}
+📁 <b>Type:</b> {session.get('file_type', 'File')}
 
 Your content is now available for purchase! Fans can buy it using:
 • The browse content menu
-• `/buy {session['name']}` command
+• /buy {session['name']} command
 
 🛒 Content will be delivered automatically after payment.
 """
@@ -645,7 +645,7 @@ Your content is now available for purchase! Fans can buy it using:
         markup.add(types.InlineKeyboardButton("📦 Add Another", callback_data="start_upload"))
         markup.add(types.InlineKeyboardButton("👥 View Users", callback_data="owner_list_users"))
         
-        bot.send_message(OWNER_ID, success_text, reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(OWNER_ID, success_text, reply_markup=markup, parse_mode='HTML')
         
         # Clear upload session
         if OWNER_ID in upload_sessions:
@@ -683,14 +683,17 @@ def owner_list_users(message):
     conn.close()
     
     if paying_customers:
-        user_text = "💰 **PAYING CUSTOMERS** 💰\n\n"
+        user_text = "💰 <b>PAYING CUSTOMERS</b> 💰\n\n"
         
         user_text += f"👥 Total Paying Customers: {total_paying_customers or 0}\n"
         user_text += f"💰 Total Revenue: {total_revenue or 0} Stars\n"
         user_text += f"📈 Average Revenue per Customer: {(total_revenue or 0) / max(total_paying_customers or 1, 1):.1f} Stars\n\n"
         
         for user_id, username, first_name, stars_spent, interactions, is_loyal in paying_customers[:15]:  # Show top 15
-            user_text += f"👤 {first_name or 'N/A'} (@{username or 'none'})\n"
+            # Escape HTML characters in usernames to prevent parsing errors
+            safe_username = (username or 'none').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            safe_first_name = (first_name or 'N/A').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            user_text += f"👤 {safe_first_name} (@{safe_username})\n"
             user_text += f"   💰 {stars_spent} Stars | 💬 {interactions} interactions"
             if is_loyal == 'Yes':
                 user_text += " | ⭐ LOYAL"
@@ -699,7 +702,7 @@ def owner_list_users(message):
         if len(paying_customers) > 15:
             user_text += f"... and {len(paying_customers) - 15} more paying customers"
         
-        bot.send_message(message.chat.id, user_text, parse_mode='Markdown')
+        bot.send_message(message.chat.id, user_text, parse_mode='HTML')
     else:
         bot.send_message(message.chat.id, "💰 No paying customers yet. Share your content to start earning! 🚀")
 
@@ -849,9 +852,21 @@ def handle_callback_query(call):
     elif call.data == "cmd_help":
         help_command(call.message)
     elif call.data == "cmd_start":
-        start_command(call.message)
+        # Create proper message object with callback user info
+        fake_message = type('obj', (object,), {
+            'chat': call.message.chat,
+            'from_user': call.from_user,
+            'message_id': call.message.message_id
+        })
+        start_command(fake_message)
     elif call.data == "cmd_teaser":
-        teaser_command(call.message)
+        # Create proper message object with callback user info
+        fake_message = type('obj', (object,), {
+            'chat': call.message.chat,
+            'from_user': call.from_user,
+            'message_id': call.message.message_id
+        })
+        teaser_command(fake_message)
     elif call.data == "buy_premium":
         show_content_catalog(call.message.chat.id)
     elif call.data.startswith("buy_"):
