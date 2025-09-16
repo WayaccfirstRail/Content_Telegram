@@ -1383,8 +1383,11 @@ Use the buttons below to navigate - no need to type commands!
         types.InlineKeyboardButton("🛒 Browse Content", callback_data="browse_content"),
         types.InlineKeyboardButton("💬 Ask Me Anything", callback_data="ask_question")
     )
-    # Row 3: Help refresh
-    markup.add(types.InlineKeyboardButton("🔄 Refresh Help", callback_data="cmd_help"))
+    # Row 3: My Content and Help refresh
+    markup.add(
+        types.InlineKeyboardButton("📂 My Content", callback_data="my_content"),
+        types.InlineKeyboardButton("🔄 Refresh Help", callback_data="cmd_help")
+    )
     
     bot.send_message(message.chat.id, help_text, reply_markup=markup, parse_mode='Markdown')
 
@@ -2057,11 +2060,11 @@ def owner_help(message):
 
 📦 **Content Management:**
 • `/owner_upload` - Guided file upload (photos/videos/documents)
-• `/owner_upload_teaser` - Upload teasers for non-VIP users
 • `/owner_add_content [name] [price] [url] [description]` - Add content via URL
 • `/owner_delete_content [name]` - Remove content
 
 🎬 **Teaser Management:**
+• `/owner_upload_teaser` - Upload teasers for non-VIP users
 • `/owner_list_teasers` - View all uploaded teasers
 • `/owner_delete_teaser [ID]` - Delete teaser by ID
 
@@ -2071,7 +2074,7 @@ def owner_help(message):
 • `/owner_list_vips` - View active VIP subscribers
 
 🤖 **Bot Configuration:**
-• `/owner_set_response [key] [text]` - Update AI responses
+• `/owner_set_response [key] [text]` - Update Responses
   Keys: greeting, question, compliment, default
 
 ℹ️ **Information:**
@@ -2082,7 +2085,7 @@ def owner_help(message):
 - VIP subscriptions generate more revenue than individual sales
 - Upload files directly for automatic Telegram hosting
 - Analytics show only paying customers
-- AI responses support emojis and markdown
+- Responses support emojis and markdown
 - All changes take effect immediately
 """
     
