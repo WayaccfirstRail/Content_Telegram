@@ -1,0 +1,55 @@
+Generate a complete, professional Python Telegram bot using pyTelegramBotAPI (telebot) for a content creator who shares media for Telegram Stars and interacts with fans. The bot should allow the creator to **fully manage content, fan interactions, and payments inside Telegram**, without using OF links. The goal is to automate monetization while maintaining a personal feel.
+
+**User/Fan Features:**  
+- Fans can interact naturally (hi, hello, questions) and get AI-style responses.  
+- Commands:
+  - /start → welcome message with brief intro and teaser content.
+  - /teaser → free previews (text, photo, video) to engage fans.
+  - /buy [item] → purchase specific content with Telegram Stars, handles invoices, pre-checkouts, and content delivery.
+  - /help → list available commands.
+- Inline buttons:
+  - "View Teaser," "Buy Content," "Ask a Question."
+- Bot tracks user activity, total Stars spent, loyalty points, and interaction history in SQLite.
+- If users type normal text instead of commands, bot replies using context-aware stored responses (AI-style).
+
+**Creator/Owner Features:**  
+- Fully in-chat admin control; no Replit editing needed after setup.
+- Owner commands:
+  - /owner_add_content [name] [price_stars] [file_path_or_url] → add new unlockable content.
+  - /owner_delete_content [name] → remove content.
+  - /owner_list_users → view all fan stats.
+  - /owner_user_history [user_id] → see interactions and payments.
+  - /owner_mark_loyal [user_id] [reason] → tag loyal fans.
+  - /owner_remove_user [user_id] → delete users (backup option included).
+  - /owner_recover_user [user_id] → restore deleted users from backup.
+  - /owner_set_response [key] [text] → edit AI-style replies.
+  - /owner_schedule_post [datetime] [content] → schedule posts to fans.
+  - /owner_analytics → track Stars earned, top fans, engagement.
+  - /owner_help → list all owner commands.
+- Inline buttons for admin shortcuts:
+  - "Add Content," "Delete Content," "View Users," "Schedule Post."
+
+**Technical Requirements:**  
+- Python 3, pyTelegramBotAPI, sqlite3, os for env variables, datetime/threading for scheduling.
+- SQLite database tables:
+  - `users`: user_id, join_date, total_stars_spent, interaction history.
+  - `loyal_fans`: user_id, reason.
+  - `responses`: key-value for AI-style fallback.
+  - `content_items`: name, price_stars, file path/URL.
+  - `scheduled_posts`: datetime, content.
+- Telegram Stars integration:
+  - `bot.send_invoice` with currency='XTR'.
+  - Handle `pre_checkout_query` and `successful_payment`.
+  - Deliver content automatically after payment, update user stats.
+- AI-style fallback for natural messages: if a fan sends free text, bot responds using stored responses, can be personalized.
+- Inline buttons for fan interactions (teasers, buy content, ask question) and owner controls.
+- Error handling and logging; optionally notify owner of issues.
+- Flask server included to keep bot running on Replit, threading for `bot.infinity_polling()`.
+- BOT_TOKEN in Replit Secrets; OWNER_ID set as env var or hardcoded.
+- Provide comments in code explaining setup, adding content, editing responses, and using commands.
+
+**Goal:** The bot should fully replicate her Telegram workflow:
+- Share paid content for Stars.
+- Talk to fans using text or AI-style fallback.
+- Track loyalty and interactions.
+- Manage everything inside Telegram without touching Replit.
