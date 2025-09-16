@@ -1498,7 +1498,7 @@ After you send the file, I'll ask for the name, price, and description.
     
     bot.send_message(message.chat.id, upload_text, reply_markup=markup, parse_mode='HTML')
 
-@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and (OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID].get('type') not in ['teaser']))
+@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') not in ['teaser', 'vip_content'])
 def handle_file_upload(message):
     """Handle file uploads for content creation (excludes teaser sessions)"""
     # Check if we're in any upload session
