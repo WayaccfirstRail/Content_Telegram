@@ -256,16 +256,16 @@ def check_user_owns_content(user_id, content_name):
     return purchase is not None
 
 def get_user_purchased_content(user_id):
-    """Get all content purchased by a user"""
+    """Get all BROWSE content purchased by a user - does not include VIP content"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         SELECT up.content_name, up.purchase_date, up.price_paid, ci.description, ci.file_path
         FROM user_purchases up
         JOIN content_items ci ON up.content_name = ci.name
-        WHERE up.user_id = ?
+        WHERE up.user_id = ? AND ci.content_type = ?
         ORDER BY up.purchase_date DESC
-    ''', (user_id,))
+    ''', (user_id, 'browse'))
     purchases = cursor.fetchall()
     conn.close()
     return purchases
@@ -465,6 +465,176 @@ def add_teaser(file_path, file_type, description):
     conn.commit()
     conn.close()
 
+def start_vip_upload_session(chat_id, user_id):
+    """Start guided VIP content upload session"""
+    if user_id != OWNER_ID:
+        bot.send_message(chat_id, "❌ Access denied. This is an owner-only command.")
+        return
+    
+    # Initialize VIP upload session
+    upload_sessions[OWNER_ID] = {
+        'type': 'vip_content',
+        'step': 'waiting_for_file',
+        'content_type': 'vip',
+        'name': None,
+        'price': None,
+        'description': None,
+        'file_path': None,
+        'file_type': None
+    }
+    
+    upload_text = """
+💎 <b>VIP CONTENT UPLOAD</b> 💎
+
+📤 <b>Step 1: Upload File</b>
+Send me the file you want to add as VIP content:
+
+📱 <b>Supported Files:</b>
+• Photos (JPG, PNG, GIF)
+• Videos (MP4, MOV, AVI)
+• Documents (PDF, ZIP, etc.)
+
+🎯 <b>Tips:</b>
+• Upload high-quality content
+• VIP members get FREE access
+• Non-VIP users need subscription
+
+📂 Just send the file when ready!
+"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("❌ Cancel VIP Upload", callback_data="cancel_vip_upload"))
+    
+    bot.send_message(chat_id, upload_text, reply_markup=markup, parse_mode='HTML')
+
+def handle_vip_file_upload(message, file_id, file_type):
+    """Handle VIP content file upload"""
+    session = upload_sessions[OWNER_ID]
+    
+    # Store file information
+    session['file_path'] = file_id
+    session['file_type'] = file_type
+    session['step'] = 'waiting_for_name'
+    
+    # Extract filename for smart default
+    filename = "custom_content"
+    if message.content_type == 'photo':
+        filename = f"vip_photo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    elif message.content_type == 'video':
+        if hasattr(message.video, 'file_name') and message.video.file_name:
+            filename = message.video.file_name.split('.')[0]
+        else:
+            filename = f"vip_video_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    elif message.content_type == 'document':
+        if hasattr(message.document, 'file_name') and message.document.file_name:
+            filename = message.document.file_name.split('.')[0]
+        else:
+            filename = f"vip_document_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    # Clean filename (replace spaces with underscores, keep alphanumeric)
+    safe_filename = ''.join(c if c.isalnum() or c == '_' else '_' for c in filename.lower())
+    session['suggested_name'] = safe_filename
+    
+    # Ask for content name
+    name_text = f"""
+✅ <b>{file_type.title()} uploaded successfully!</b>
+
+📝 <b>Step 2: Content Name</b>
+Choose a unique name for this VIP content:
+
+💡 <b>Suggested:</b> <code>{safe_filename}</code>
+
+🔤 <b>Naming Rules:</b>
+• Use letters, numbers, and underscores only
+• No spaces allowed
+• Must be unique
+
+✍️ Type your custom name or use the buttons below:
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton(f"✅ Use: {safe_filename}", callback_data="use_suggested_name"))
+    markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_vip_upload"))
+    
+    bot.send_message(message.chat.id, name_text, reply_markup=markup, parse_mode='HTML')
+
+def handle_vip_name_input(message):
+    """Handle VIP content name input"""
+    session = upload_sessions[OWNER_ID]
+    name = message.text.strip()
+    
+    # Validate name
+    if not name or ' ' in name or not all(c.isalnum() or c == '_' for c in name):
+        bot.send_message(message.chat.id, "❌ Invalid name! Use only letters, numbers, and underscores (no spaces).\nExample: my_vip_content_1")
+        return
+    
+    # Check if name already exists
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT name FROM content_items WHERE name = ?', (name,))
+    existing = cursor.fetchone()
+    conn.close()
+    
+    if existing:
+        bot.send_message(message.chat.id, f"❌ Content with name '{name}' already exists! Choose a different name.")
+        return
+    
+    # Store name and move to description step
+    session['name'] = name
+    session['step'] = 'waiting_for_description'
+    
+    desc_text = f"""
+✅ <b>Name set:</b> {name}
+
+📝 <b>Step 3: Description (Optional)</b>
+Add a description that VIP members will see:
+
+💡 <b>Examples:</b>
+• "Exclusive behind-the-scenes content"
+• "Special VIP-only photo set"
+• "Premium video content for VIPs"
+
+✍️ Type your description or skip to use a default:
+"""
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("⏭️ Skip Description", callback_data="skip_vip_description"))
+    markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_vip_upload"))
+    
+    bot.send_message(message.chat.id, desc_text, reply_markup=markup, parse_mode='HTML')
+
+def handle_vip_description_input(message):
+    """Handle VIP content description input"""
+    session = upload_sessions[OWNER_ID]
+    description = message.text.strip()
+    
+    if description.lower() == 'skip':
+        description = f"Exclusive VIP {session.get('file_type', 'content').lower()}"
+    
+    session['description'] = description
+    
+    # Set VIP price (VIP content is free for VIP members, but has nominal price for display)
+    session['price'] = 0  # VIP content is free for VIP members
+    
+    # Save VIP content
+    save_uploaded_content(session)
+
+def complete_vip_upload_with_defaults(session):
+    """Complete VIP upload using default values"""
+    # Use suggested name if no custom name provided
+    if not session.get('name'):
+        session['name'] = session.get('suggested_name', f"vip_content_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    
+    # Use default description if none provided
+    if not session.get('description'):
+        session['description'] = f"Exclusive VIP {session.get('file_type', 'content').lower()}"
+    
+    # Set VIP price (free for VIP members)
+    session['price'] = 0
+    
+    # Save VIP content
+    save_uploaded_content(session)
+
 # VIP Content Management Functions
 
 def get_vip_content_count():
@@ -645,25 +815,30 @@ def activate_vip_subscription(user_id):
     return duration_days
 
 def deliver_vip_content(chat_id, user_id, content_name):
-    """Deliver content for free to VIP users"""
+    """Deliver VIP-only content for free to VIP users"""
     # Verify VIP status
     vip_status = check_vip_status(user_id)
     if not vip_status['is_vip']:
         bot.send_message(chat_id, "❌ VIP membership required! Please upgrade to VIP to access this content for free.")
         return
     
-    # Get content details
+    # Get content details - ONLY access VIP content type
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT file_path, description FROM content_items WHERE name = ?', (content_name,))
+    cursor.execute('SELECT file_path, description, content_type FROM content_items WHERE name = ? AND content_type = ?', (content_name, 'vip'))
     content = cursor.fetchone()
     conn.close()
     
     if not content:
-        bot.send_message(chat_id, f"❌ Content '{content_name}' not found.")
+        bot.send_message(chat_id, f"❌ VIP content '{content_name}' not found. This content may not be available in the VIP library.")
         return
     
-    file_path, description = content
+    file_path, description, content_type = content
+    
+    # Verify this is actually VIP content (double-check)
+    if content_type != 'vip':
+        bot.send_message(chat_id, f"❌ '{content_name}' is not VIP-exclusive content. This content requires individual purchase.")
+        return
     
     # Send VIP access message
     vip_message = f"""
@@ -907,22 +1082,33 @@ def buy_command(message):
         show_content_catalog(message.chat.id)
 
 def purchase_item(chat_id, user_id, item_name):
-    """Process purchase for specific item"""
+    """Process purchase for specific item - ONLY allows purchases of 'browse' content"""
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT * FROM content_items WHERE name = ?', (item_name,))
+    # Only allow purchases of 'browse' content - VIP content is subscription-only
+    cursor.execute('SELECT name, price_stars, file_path, description, created_date, content_type FROM content_items WHERE name = ? AND content_type = ?', (item_name, 'browse'))
     item = cursor.fetchone()
     conn.close()
     
     if item:
-        name, price_stars, file_path, description, created_date = item
+        name, price_stars, file_path, description, created_date, content_type = item
+        
+        # Verify this is browse content (double-check)
+        if content_type != 'browse':
+            bot.send_message(chat_id, f"❌ '{item_name}' is VIP-exclusive content and cannot be purchased individually. Please upgrade to VIP to access this content.")
+            return
+        
+        # Check if user already owns this content
+        if check_user_owns_content(user_id, name):
+            bot.send_message(chat_id, f"✅ You already own '{name}'! Use 'My Content' to access it again.")
+            return
         
         # Create invoice for Telegram Stars
         prices = [types.LabeledPrice(label=name, amount=price_stars)]
         
         bot.send_invoice(
             chat_id=chat_id,
-            title=f"Premium Content: {name}",
+            title=f"Browse Content: {name}",
             description=description,
             invoice_payload=f"content_{name}_{user_id}",
             provider_token=None,  # None for Telegram Stars
@@ -931,7 +1117,17 @@ def purchase_item(chat_id, user_id, item_name):
             start_parameter='purchase'
         )
     else:
-        bot.send_message(chat_id, f"Sorry, I couldn't find content named '{item_name}'. Use /help to see available content.")
+        # Check if it's VIP content that user is trying to purchase
+        conn = sqlite3.connect('content_bot.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT name, content_type FROM content_items WHERE name = ?', (item_name,))
+        vip_check = cursor.fetchone()
+        conn.close()
+        
+        if vip_check and vip_check[1] == 'vip':
+            bot.send_message(chat_id, f"❌ '{item_name}' is VIP-exclusive content and cannot be purchased individually.\n\n💎 Upgrade to VIP subscription for unlimited access to all VIP content!")
+        else:
+            bot.send_message(chat_id, f"❌ Content '{item_name}' not found in browse catalog. Check /help for available content.")
 
 def show_vip_access(chat_id, user_id):
     """Show VIP access options and current status"""
@@ -1012,31 +1208,24 @@ def purchase_vip_subscription(chat_id, user_id):
     )
 
 def show_content_catalog(chat_id, user_id=None):
-    """Show available content for purchase with VIP access controls"""
+    """Show available BROWSE content for purchase - does not include VIP-only content"""
     # Get user ID if not provided (for callback compatibility)
     if user_id is None:
         # This is a fallback for when called from callback without user_id
         # In practice, we should always pass user_id
         user_id = chat_id  # Assuming direct message context
     
-    # Check VIP status
-    vip_status = check_vip_status(user_id)
-    is_vip = vip_status['is_vip']
-    
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT name, price_stars, description FROM content_items')
+    # Only show content marked as 'browse' type - not VIP-only content
+    cursor.execute('SELECT name, price_stars, description FROM content_items WHERE content_type = ?', ('browse',))
     items = cursor.fetchall()
     conn.close()
     
     if items:
-        if is_vip:
-            catalog_text = "💎 <b>VIP EXCLUSIVE CONTENT</b> 💎\n\n"
-            catalog_text += f"🎉 As a VIP member, you have <b>FREE ACCESS</b> to all content!\n"
-            catalog_text += f"⏰ Your VIP expires in {vip_status['days_left']} days\n\n"
-        else:
-            catalog_text = "🛒 <b>EXCLUSIVE CONTENT CATALOG</b> 🛒\n\n"
-            catalog_text += "💡 <b>Tip:</b> VIP members get FREE access to all content!\n\n"
+        catalog_text = "🛒 <b>BROWSE CONTENT CATALOG</b> 🛒\n\n"
+        catalog_text += "💰 Purchase individual items with Telegram Stars\n"
+        catalog_text += "💡 <b>Tip:</b> VIP members get access to exclusive VIP content library!\n\n"
         
         markup = types.InlineKeyboardMarkup()
         
@@ -1047,32 +1236,120 @@ def show_content_catalog(chat_id, user_id=None):
             
             catalog_text += f"✨ <b>{safe_name}</b>\n"
             
-            if is_vip:
-                catalog_text += f"💎 <b>VIP FREE ACCESS</b>\n"
-                markup.add(types.InlineKeyboardButton(f"🎁 Get {name} (VIP FREE)", callback_data=f"vip_get_{name}"))
+            # Check if user already owns this content
+            owns_content = check_user_owns_content(user_id, name)
+            
+            if owns_content:
+                catalog_text += f"✅ <b>OWNED</b> - You already purchased this!\n"
+                markup.add(types.InlineKeyboardButton(f"🎁 Access {name} (Owned)", callback_data=f"access_{name}"))
             else:
-                # Check if user already owns this content
-                owns_content = check_user_owns_content(user_id, name)
-                
-                if owns_content:
-                    catalog_text += f"✅ <b>OWNED</b> - You already purchased this!\n"
-                    markup.add(types.InlineKeyboardButton(f"🎁 Access {name} (Owned)", callback_data=f"access_{name}"))
-                else:
-                    catalog_text += f"💰 {price} Stars\n"
-                    markup.add(types.InlineKeyboardButton(f"⭐ Buy {name} ({price} Stars)", callback_data=f"buy_{name}"))
+                catalog_text += f"💰 {price} Stars\n"
+                markup.add(types.InlineKeyboardButton(f"⭐ Buy {name} ({price} Stars)", callback_data=f"buy_{name}"))
             
             catalog_text += f"📝 {safe_description}\n\n"
         
-        # Add VIP upgrade option for non-VIP users
-        if not is_vip:
-            markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP for FREE Access", callback_data="vip_access"))
+        # Add VIP access option
+        markup.add(types.InlineKeyboardButton("💎 Access VIP Content Library", callback_data="vip_content_catalog"))
+        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP", callback_data="vip_access"))
         
         # Add back button
         markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
         
         bot.send_message(chat_id, catalog_text, reply_markup=markup, parse_mode='HTML')
     else:
-        bot.send_message(chat_id, "No content available right now. Check back soon! 💕")
+        bot.send_message(chat_id, "No browse content available right now. Check back soon! 💕\n\n💎 VIP members have access to exclusive VIP content library!")
+
+def show_vip_catalog(chat_id, user_id=None):
+    """Show VIP-only content catalog - requires active VIP subscription"""
+    # Get user ID if not provided (for callback compatibility)
+    if user_id is None:
+        user_id = chat_id  # Assuming direct message context
+    
+    # Check VIP status - must be VIP to access this catalog
+    vip_status = check_vip_status(user_id)
+    if not vip_status['is_vip']:
+        # Not VIP - show upgrade prompt
+        no_vip_message = """
+💎 <b>VIP CONTENT LIBRARY</b> 💎
+
+🚫 <b>VIP Membership Required!</b>
+
+This exclusive content library is only available to VIP members. Upgrade now to unlock:
+
+✨ <b>VIP-Only Benefits:</b>
+• Exclusive VIP content library
+• Premium photos and videos
+• Behind-the-scenes content
+• Direct personal chat access
+• Priority responses
+
+🚀 Ready to upgrade and unlock everything?
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP", callback_data="vip_access"))
+        markup.add(types.InlineKeyboardButton("🛒 Browse Regular Content", callback_data="browse_content"))
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+        
+        bot.send_message(chat_id, no_vip_message, reply_markup=markup, parse_mode='HTML')
+        return
+    
+    # User is VIP - show VIP content library
+    conn = sqlite3.connect('content_bot.db')
+    cursor = conn.cursor()
+    # Only show content marked as 'vip' type
+    cursor.execute('SELECT name, price_stars, description FROM content_items WHERE content_type = ?', ('vip',))
+    vip_items = cursor.fetchall()
+    conn.close()
+    
+    if vip_items:
+        catalog_text = f"💎 <b>VIP EXCLUSIVE CONTENT LIBRARY</b> 💎\n\n"
+        catalog_text += f"🎉 Welcome VIP member! Free access to all VIP content!\n"
+        catalog_text += f"⏰ Your VIP expires in {vip_status['days_left']} days\n\n"
+        catalog_text += f"📚 <b>{len(vip_items)} exclusive VIP items available:</b>\n\n"
+        
+        markup = types.InlineKeyboardMarkup()
+        
+        for name, price, description in vip_items:
+            # Escape HTML special characters to prevent parsing errors
+            safe_name = name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            safe_description = description.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            catalog_text += f"💎 <b>{safe_name}</b>\n"
+            catalog_text += f"🆓 <b>VIP FREE ACCESS</b>\n"
+            catalog_text += f"📝 {safe_description}\n\n"
+            
+            # Add free access button for VIP content
+            markup.add(types.InlineKeyboardButton(f"💎 Access {name} (VIP FREE)", callback_data=f"vip_get_{name}"))
+        
+        # Add navigation buttons
+        markup.add(types.InlineKeyboardButton("🛒 Browse Regular Content", callback_data="browse_content"))
+        markup.add(types.InlineKeyboardButton(f"🔄 Extend VIP", callback_data="buy_vip"))
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+        
+        bot.send_message(chat_id, catalog_text, reply_markup=markup, parse_mode='HTML')
+    else:
+        # No VIP content available
+        no_content_message = f"""
+💎 <b>VIP EXCLUSIVE CONTENT LIBRARY</b> 💎
+
+🎉 Welcome VIP member!
+⏰ Your VIP expires in {vip_status['days_left']} days
+
+📂 <b>VIP Content Status:</b>
+🚧 No exclusive VIP content available yet, but stay tuned!
+
+More premium VIP content is being added regularly. Check back soon for exclusive releases!
+
+💡 <b>Meanwhile:</b> You can still browse and purchase regular content.
+"""
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🛒 Browse Regular Content", callback_data="browse_content"))
+        markup.add(types.InlineKeyboardButton(f"🔄 Extend VIP", callback_data="buy_vip"))
+        markup.add(types.InlineKeyboardButton("🏠 Back to Main", callback_data="cmd_start"))
+        
+        bot.send_message(chat_id, no_content_message, reply_markup=markup, parse_mode='HTML')
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
@@ -1208,12 +1485,12 @@ After you send the file, I'll ask for the name, price, and description.
     
     bot.send_message(message.chat.id, upload_text, reply_markup=markup, parse_mode='HTML')
 
-@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and (OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID].get('type') != 'teaser'))
+@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and (OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID].get('type') not in ['teaser']))
 def handle_file_upload(message):
     """Handle file uploads for content creation (excludes teaser sessions)"""
-    # Check if we're in a regular upload session
+    # Check if we're in any upload session
     if OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID]['step'] != 'waiting_for_file':
-        bot.send_message(message.chat.id, "📤 To upload content, start with `/owner_upload` command first!")
+        bot.send_message(message.chat.id, "📤 To upload content, start with `/owner_upload` or use VIP upload!")
         return
     
     # Get file info based on content type
@@ -1243,6 +1520,13 @@ def handle_file_upload(message):
             bot.send_message(message.chat.id, "❌ Unsupported file type. Please send a photo, video, or document.")
             return
         
+        # Check if this is a VIP upload session
+        session = upload_sessions[OWNER_ID]
+        if session.get('type') == 'vip_content':
+            handle_vip_file_upload(message, file_id, file_type)
+            return
+        
+        # Regular content upload
         upload_sessions[OWNER_ID]['file_path'] = file_id  # Store file_id instead of URL
         upload_sessions[OWNER_ID]['file_type'] = file_type
         upload_sessions[OWNER_ID]['step'] = 'waiting_for_name'
@@ -1271,6 +1555,17 @@ def handle_upload_flow(message):
         return
     
     session = upload_sessions[OWNER_ID]
+    
+    # Handle VIP upload flow
+    if session.get('type') == 'vip_content':
+        if session['step'] == 'waiting_for_name':
+            handle_vip_name_input(message)
+            return
+        elif session['step'] == 'waiting_for_description':
+            handle_vip_description_input(message)
+            return
+    
+    # Regular upload flow continues below
     
     if session['step'] == 'waiting_for_name':
         # Validate name (no spaces, alphanumeric + underscores)
@@ -1359,15 +1654,34 @@ def save_uploaded_content(session):
     try:
         conn = sqlite3.connect('content_bot.db')
         cursor = conn.cursor()
+        
+        # Check if this is VIP content
+        content_type = session.get('content_type', 'browse')
+        
         cursor.execute('''
-            INSERT INTO content_items (name, price_stars, file_path, description, created_date)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (session['name'], session['price'], session['file_path'], session['description'], datetime.datetime.now().isoformat()))
+            INSERT INTO content_items (name, price_stars, file_path, description, created_date, content_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (session['name'], session['price'], session['file_path'], session['description'], datetime.datetime.now().isoformat(), content_type))
         conn.commit()
         conn.close()
         
         # Success message
-        success_text = f"""
+        if content_type == 'vip':
+            success_text = f"""
+💎 <b>VIP CONTENT ADDED SUCCESSFULLY!</b> 💎
+
+📦 <b>Name:</b> {session['name']}
+💰 <b>Price:</b> {session['price']} Stars
+📝 <b>Description:</b> {session['description']}
+📁 <b>Type:</b> {session.get('file_type', 'File')} (VIP Exclusive)
+
+🎉 Your VIP content is now live! VIP members get FREE access.
+Non-VIP users can purchase VIP subscriptions to access this content.
+
+💡 VIP content generates higher revenue through subscriptions!
+"""
+        else:
+            success_text = f"""
 🎉 <b>CONTENT ADDED SUCCESSFULLY!</b> 🎉
 
 📦 <b>Name:</b> {session['name']}
@@ -1383,8 +1697,12 @@ Your content is now available for purchase! Fans can buy it using:
 """
         
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("📦 Add Another", callback_data="start_upload"))
-        markup.add(types.InlineKeyboardButton("👥 View Users", callback_data="owner_list_users"))
+        if content_type == 'vip':
+            markup.add(types.InlineKeyboardButton("💎 Add More VIP Content", callback_data="start_vip_upload"))
+            markup.add(types.InlineKeyboardButton("📊 VIP Dashboard", callback_data="cmd_vip"))
+        else:
+            markup.add(types.InlineKeyboardButton("📦 Add Another", callback_data="start_upload"))
+            markup.add(types.InlineKeyboardButton("👥 View Users", callback_data="owner_list_users"))
         
         bot.send_message(OWNER_ID, success_text, reply_markup=markup, parse_mode='HTML')
         
@@ -1930,12 +2248,11 @@ def show_vip_add_content_interface(chat_id):
 
 VIP content is exclusive to subscribers and generates more revenue.
 
-📝 <b>How to add VIP content:</b>
-1. Use /owner_upload to upload files directly
-2. When setting content type, select 'VIP Only'
-
-Or use the command format:
-<code>/owner_add_vip [name] [price] [url/path] [description]</code>
+📝 <b>Enhanced Upload Process:</b>
+• Upload files directly from your device
+• Custom naming with smart defaults  
+• Optional descriptions
+• Instant VIP content creation
 
 💡 <b>VIP Benefits:</b>
 • VIP members get FREE access to all VIP content
@@ -1944,7 +2261,7 @@ Or use the command format:
 """
     
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📤 Upload VIP File", callback_data="start_upload"))
+    markup.add(types.InlineKeyboardButton("📤 Start VIP Upload", callback_data="start_vip_upload"))
     markup.add(types.InlineKeyboardButton("🔙 Back to VIP Dashboard", callback_data="cmd_vip"))
     
     bot.send_message(chat_id, add_text, reply_markup=markup, parse_mode='HTML')
@@ -2228,6 +2545,8 @@ def handle_callback_query(call):
         teaser_command(call.message)
     elif call.data == "browse_content":
         show_content_catalog(call.message.chat.id, call.from_user.id)
+    elif call.data == "vip_content_catalog":
+        show_vip_catalog(call.message.chat.id, call.from_user.id)
     elif call.data == "my_content":
         show_my_content(call.message.chat.id, call.from_user.id)
     elif call.data == "ask_question":
@@ -2415,6 +2734,73 @@ Your teaser is now live! Non-VIP users will see this when they use /teaser.
             show_vip_add_content_interface(call.message.chat.id)
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "start_vip_upload":
+        if call.from_user.id == OWNER_ID:
+            start_vip_upload_session(call.message.chat.id, call.from_user.id)
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    elif call.data == "cancel_vip_upload":
+        if call.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'vip_content':
+            del upload_sessions[OWNER_ID]
+            bot.send_message(call.message.chat.id, "❌ VIP upload cancelled.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ No active VIP upload session.")
+    elif call.data == "use_suggested_name":
+        if call.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'vip_content':
+            session = upload_sessions[OWNER_ID]
+            if session['step'] == 'waiting_for_name' and 'suggested_name' in session:
+                # Check if suggested name is unique
+                suggested_name = session['suggested_name']
+                
+                # Check if name already exists
+                conn = sqlite3.connect('content_bot.db')
+                cursor = conn.cursor()
+                cursor.execute('SELECT name FROM content_items WHERE name = ?', (suggested_name,))
+                existing = cursor.fetchone()
+                conn.close()
+                
+                if existing:
+                    # Make name unique by adding timestamp
+                    timestamp = datetime.datetime.now().strftime('%H%M%S')
+                    suggested_name = f"{suggested_name}_{timestamp}"
+                
+                session['name'] = suggested_name
+                session['step'] = 'waiting_for_description'
+                
+                desc_text = f"""
+✅ <b>Name set:</b> {suggested_name}
+
+📝 <b>Step 3: Description (Optional)</b>
+Add a description that VIP members will see:
+
+💡 <b>Examples:</b>
+• "Exclusive behind-the-scenes content"
+• "Special VIP-only photo set"
+• "Premium video content for VIPs"
+
+✏️ Type your description or skip to use a default:
+"""
+                
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(types.InlineKeyboardButton("⏭️ Skip Description", callback_data="skip_vip_description"))
+                markup.add(types.InlineKeyboardButton("❌ Cancel Upload", callback_data="cancel_vip_upload"))
+                
+                bot.send_message(call.message.chat.id, desc_text, reply_markup=markup, parse_mode='HTML')
+            else:
+                bot.send_message(call.message.chat.id, "❌ Invalid step for using suggested name.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ No active VIP upload session.")
+    elif call.data == "skip_vip_description":
+        if call.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'vip_content':
+            session = upload_sessions[OWNER_ID]
+            if session['step'] == 'waiting_for_description':
+                session['description'] = f"Exclusive VIP {session.get('file_type', 'content').lower()}"
+                session['price'] = 0  # VIP content is free for VIP members
+                save_uploaded_content(session)
+            else:
+                bot.send_message(call.message.chat.id, "❌ Invalid step for skipping description.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ No active VIP upload session.")
     elif call.data == "vip_manage_content":
         if call.from_user.id == OWNER_ID:
             show_vip_content_management(call.message.chat.id)
