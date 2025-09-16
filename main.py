@@ -945,16 +945,9 @@ After you send the file, I'll ask for the name, price, and description.
     
     bot.send_message(message.chat.id, upload_text, reply_markup=markup, parse_mode='HTML')
 
-@bot.message_handler(content_types=['photo', 'video', 'document'])
+@bot.message_handler(content_types=['photo', 'video', 'document'], func=lambda message: message.from_user.id == OWNER_ID and (OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID].get('type') != 'teaser'))
 def handle_file_upload(message):
-    """Handle file uploads for content creation"""
-    if message.from_user.id != OWNER_ID:
-        return  # Only owner can upload content
-    
-    # Check if we're in a teaser upload session - if so, silently return to let teaser handler process it
-    if OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'teaser':
-        return
-    
+    """Handle file uploads for content creation (excludes teaser sessions)"""
     # Check if we're in a regular upload session
     if OWNER_ID not in upload_sessions or upload_sessions[OWNER_ID]['step'] != 'waiting_for_file':
         bot.send_message(message.chat.id, "📤 To upload content, start with `/owner_upload` command first!")
@@ -1477,6 +1470,10 @@ def owner_help(message):
 • `/owner_upload_teaser` - Upload teasers for non-VIP users
 • `/owner_add_content [name] [price] [url] [description]` - Add content via URL
 • `/owner_delete_content [name]` - Remove content
+
+🎬 **Teaser Management:**
+• `/owner_list_teasers` - View all uploaded teasers
+• `/owner_delete_teaser [ID]` - Delete teaser by ID
 
 👥 **User Management:**
 • `/owner_list_users` - View paying customers only
