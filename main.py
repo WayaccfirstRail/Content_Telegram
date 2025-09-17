@@ -1520,9 +1520,10 @@ def show_content_catalog(chat_id, user_id=None):
         
         markup = types.InlineKeyboardMarkup()
         
-        # Add VIP buttons at the top first
+        # Add VIP buttons at the top first, followed by My Content
         markup.add(types.InlineKeyboardButton("💎 Upgrade to VIP", callback_data="vip_access"))
         markup.add(types.InlineKeyboardButton("💎 Access VIP Content Library", callback_data="vip_content_catalog"))
+        markup.add(types.InlineKeyboardButton("📁 My Content", callback_data="my_content"))
         
         for name, price, description in items:
             # Escape HTML special characters to prevent parsing errors
@@ -2196,6 +2197,61 @@ def handle_vip_upload_files(message):
     
     if file_id and file_type:
         handle_vip_file_upload(message, file_id, file_type)
+    else:
+        bot.send_message(message.chat.id, "❌ Unsupported file type for VIP content. Please send photos, videos, or GIFs only.")
+
+@bot.message_handler(content_types=['photo', 'video', 'animation'], func=lambda message: message.from_user.id == OWNER_ID and OWNER_ID in upload_sessions and upload_sessions[OWNER_ID].get('type') == 'vip_file_update' and upload_sessions[OWNER_ID].get('step') == 'waiting_for_file')
+def handle_vip_file_update_upload(message):
+    """Handle VIP file update uploads - replace existing file"""
+    logger.info(f"VIP file update handler triggered - Content type: {message.content_type}, Session: {upload_sessions.get(OWNER_ID, 'None')}")
+    
+    # Get file information
+    file_id = None
+    file_type = None
+    
+    if message.content_type == 'photo':
+        file_id = message.photo[-1].file_id  # Get highest resolution
+        file_type = "Photo"
+    elif message.content_type == 'video':
+        file_id = message.video.file_id
+        file_type = "Video"
+    elif message.content_type == 'animation':
+        file_id = message.animation.file_id
+        file_type = "GIF"
+    
+    if file_id and file_type:
+        session = upload_sessions[OWNER_ID]
+        content_name = session['content_name']
+        
+        # Update the VIP content file path directly
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('UPDATE content_items SET file_path = ? WHERE name = ? AND content_type = ?', 
+                      (file_id, content_name, 'vip'))
+        updated_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        # Clear upload session
+        del upload_sessions[OWNER_ID]
+        
+        if updated_count > 0:
+            success_text = f"""
+✅ <b>FILE UPDATED SUCCESSFULLY!</b> ✅
+
+<b>VIP Content:</b> {content_name}
+<b>New File:</b> {file_type}
+
+🎉 The file has been replaced and VIP members will now see the new content!
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("✏️ Edit Content Again", callback_data=f"vip_edit_{content_name}"))
+            markup.add(types.InlineKeyboardButton("📋 Back to VIP Management", callback_data="vip_manage_content"))
+            
+            bot.send_message(message.chat.id, success_text, reply_markup=markup, parse_mode='HTML')
+        else:
+            bot.send_message(message.chat.id, f"❌ Failed to update file for '{content_name}'. Please try again.")
     else:
         bot.send_message(message.chat.id, "❌ Unsupported file type for VIP content. Please send photos, videos, or GIFs only.")
 
@@ -3249,7 +3305,7 @@ Are you sure you want to delete this VIP content?
     bot.send_message(chat_id, confirm_text, reply_markup=markup, parse_mode='HTML')
 
 def show_vip_content_edit_interface(chat_id, content_name):
-    """Show VIP content edit interface"""
+    """Show enhanced VIP content edit interface with inline buttons"""
     content = get_vip_content_by_name(content_name)
     
     if not content:
@@ -3258,6 +3314,14 @@ def show_vip_content_edit_interface(chat_id, content_name):
     
     name, price, file_path, description, created_date = content
     
+    # Generate clickable file path if it's a URL
+    file_display = ""
+    if file_path.startswith(('http://', 'https://')):
+        file_display = f"<a href='{file_path}'>🔗 View Current File</a>"
+    else:
+        # Show truncated file path for file IDs
+        file_display = f"📁 {file_path[:50]}{'...' if len(file_path) > 50 else ''}"
+    
     edit_text = f"""
 ✏️ <b>EDIT VIP CONTENT</b> ✏️
 
@@ -3265,9 +3329,9 @@ def show_vip_content_edit_interface(chat_id, content_name):
 • Name: {name}
 • Price: {price} Stars  
 • Description: {description}
-• File: {file_path[:50]}{'...' if len(file_path) > 50 else ''}
+• File: {file_display}
 
-🔧 <b>Edit Commands:</b>
+🔧 <b>Quick Edit Commands:</b>
 • <code>/owner_edit_vip_price {name} [new_price]</code>
 • <code>/owner_edit_vip_description {name} [new_description]</code>
 • <code>/owner_edit_vip_file {name} [new_file_path]</code>
@@ -3275,11 +3339,24 @@ def show_vip_content_edit_interface(chat_id, content_name):
 💡 <b>Note:</b> Changes take effect immediately for new VIP subscribers.
 """
     
-    markup = types.InlineKeyboardMarkup()
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Add inline editing buttons
+    markup.add(types.InlineKeyboardButton("📁 Upload New File", callback_data=f"vip_upload_file_{name}"))
+    
+    # Add file path link if it's a URL
+    if file_path.startswith(('http://', 'https://')):
+        markup.add(types.InlineKeyboardButton("🔗 View Current File", url=file_path))
+    
+    # Add other editing options
+    markup.add(types.InlineKeyboardButton("💰 Edit Price", callback_data=f"vip_edit_price_{name}"))
+    markup.add(types.InlineKeyboardButton("📝 Edit Description", callback_data=f"vip_edit_desc_{name}"))
+    
+    # Add danger zone
     markup.add(types.InlineKeyboardButton("🗑️ Delete This Content", callback_data=f"vip_delete_{name}"))
     markup.add(types.InlineKeyboardButton("🔙 Back to VIP Content", callback_data="vip_manage_content"))
     
-    bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML')
+    bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML', disable_web_page_preview=False)
 
 @bot.message_handler(commands=['owner_list_vips'])
 def owner_list_vips(message):
@@ -3881,6 +3958,84 @@ Add a description that VIP members will see:
                 show_vip_content_management(call.message.chat.id)
             else:
                 bot.send_message(call.message.chat.id, f"❌ Failed to delete VIP content '{content_name}'.")
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    # New VIP content inline editing handlers
+    elif call.data.startswith("vip_upload_file_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("vip_upload_file_", "")
+            # Start file upload session for this specific VIP content
+            upload_sessions[OWNER_ID] = {
+                'type': 'vip_file_update',
+                'step': 'waiting_for_file',
+                'content_name': content_name,
+                'name': content_name,
+                'file_path': None
+            }
+            
+            upload_text = f"""
+📁 <b>UPLOAD NEW FILE FOR VIP CONTENT</b> 📁
+
+<b>Content:</b> {content_name}
+
+📤 <b>Send me the new file:</b>
+• Photo (JPG, PNG, etc.)
+• Video (MP4, MOV, AVI)
+• Animated GIF
+
+📝 Just upload the new file and I'll replace the current one!
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data=f"vip_edit_{content_name}"))
+            
+            bot.send_message(call.message.chat.id, upload_text, reply_markup=markup, parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    elif call.data.startswith("vip_edit_price_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("vip_edit_price_", "")
+            price_text = f"""
+💰 <b>EDIT PRICE FOR VIP CONTENT</b> 💰
+
+<b>Content:</b> {content_name}
+
+💡 <b>Note:</b> VIP content is typically set to 0 Stars because VIP members get FREE access to all VIP content. The subscription fee is what generates revenue.
+
+<b>Quick Command:</b>
+<code>/owner_edit_vip_price {content_name} [new_price]</code>
+
+Example: <code>/owner_edit_vip_price {content_name} 0</code>
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔙 Back to Edit", callback_data=f"vip_edit_{content_name}"))
+            
+            bot.send_message(call.message.chat.id, price_text, reply_markup=markup, parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    elif call.data.startswith("vip_edit_desc_"):
+        if call.from_user.id == OWNER_ID:
+            content_name = call.data.replace("vip_edit_desc_", "")
+            desc_text = f"""
+📝 <b>EDIT DESCRIPTION FOR VIP CONTENT</b> 📝
+
+<b>Content:</b> {content_name}
+
+✏️ <b>Quick Command:</b>
+<code>/owner_edit_vip_description {content_name} [new_description]</code>
+
+<b>Example:</b>
+<code>/owner_edit_vip_description {content_name} Exclusive premium VIP content just for you!</code>
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔙 Back to Edit", callback_data=f"vip_edit_{content_name}"))
+            
+            bot.send_message(call.message.chat.id, desc_text, reply_markup=markup, parse_mode='HTML')
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
     
