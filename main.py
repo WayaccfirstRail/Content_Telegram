@@ -4492,9 +4492,27 @@ def serve_content_file(file_path, content_name="Content", description=""):
         logger.error(f"Error in serve_content_file: {e}")
         abort(500, "File serving error")
 
+def clear_webhook_and_polling():
+    """Clear any existing webhook and stop other polling instances"""
+    try:
+        logger.info("Clearing any existing webhook...")
+        # Clear webhook to stop webhook mode
+        bot.remove_webhook()
+        logger.info("Webhook cleared successfully")
+        
+        # Short delay to ensure cleanup
+        import time
+        time.sleep(2)
+        
+    except Exception as e:
+        logger.warning(f"Error clearing webhook (this is usually fine): {e}")
+
 def run_bot():
     """Run the bot with infinity polling and better error handling"""
     import time
+    
+    # First, clear any existing webhook to prevent conflicts
+    clear_webhook_and_polling()
     
     max_retries = 5
     retry_delay = 5  # seconds
@@ -4502,15 +4520,34 @@ def run_bot():
     for attempt in range(max_retries):
         try:
             logger.info(f"Starting bot polling (attempt {attempt + 1}/{max_retries})...")
+            
+            # Clear webhook again right before polling starts
+            if attempt > 0:  # On retries, try clearing webhook again
+                try:
+                    bot.remove_webhook()
+                    time.sleep(1)
+                except:
+                    pass
+            
             bot.infinity_polling(
                 none_stop=True,
                 timeout=30,  # 30 second timeout for requests
                 skip_pending=True  # Skip pending messages on restart
             )
+            logger.info("Bot polling started successfully!")
             break  # If we reach here, polling started successfully
             
         except Exception as e:
-            logger.error(f"Bot polling failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            error_str = str(e)
+            logger.error(f"Bot polling failed (attempt {attempt + 1}/{max_retries}): {error_str}")
+            
+            # Special handling for 409 conflicts
+            if "409" in error_str and "getUpdates" in error_str:
+                logger.info("Detected getUpdates conflict, waiting longer before retry...")
+                if attempt < max_retries - 1:
+                    longer_delay = retry_delay * 2
+                    logger.info(f"Waiting {longer_delay} seconds for other instances to timeout...")
+                    time.sleep(longer_delay)
             
             if attempt < max_retries - 1:
                 logger.info(f"Retrying in {retry_delay} seconds...")
@@ -4518,6 +4555,7 @@ def run_bot():
                 retry_delay *= 2  # Exponential backoff
             else:
                 logger.error("Max retries reached. Bot polling could not be started.")
+                logger.info("Flask server will continue running for health checks.")
                 # Don't exit, let Flask continue running for health checks
                 break
 
