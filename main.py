@@ -4632,12 +4632,14 @@ Thank you for your purchase! Here's your exclusive content:
                     bot.send_message(OWNER_ID, f"""
 💰 **NEW SALE!** 💰
 
-👤 Customer: {first_name} (@{username})
+👤 [{first_name}](tg://user?id={user_id})
 🛒 Item: {content_name}
 ⭐ Amount: {payment.total_amount} Stars
 💎 Total Spent: {total_spent} Stars
 🆔 User ID: {user_id}
-""")
+
+💬 Click the name to message them directly!
+""", parse_mode='Markdown')
             except Exception as e:
                 logger.error(f"Error notifying owner: {e}")
 
