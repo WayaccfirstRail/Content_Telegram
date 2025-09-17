@@ -4,6 +4,16 @@ This is a professional Telegram bot designed for content creators who monetize t
 
 The bot provides a dual interface: fans can browse teasers, purchase content with Telegram Stars, and have natural conversations, while content creators get comprehensive admin controls for content management, user analytics, and automated interactions.
 
+# Recent Changes
+
+**September 17, 2025 - Replit Environment Setup**
+- Successfully configured the Telegram bot to run in Replit environment
+- Set up required secrets: BOT_TOKEN and OWNER_ID
+- Configured Flask web server on port 5000 with webview output
+- Database initialization working properly with SQLite
+- Bot polling and Flask server running concurrently via threading
+- Deployment configured for VM target to maintain persistent operation
+
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
