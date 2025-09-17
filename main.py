@@ -2835,10 +2835,10 @@ Choose an action below to manage your content:
 
 def show_edit_content_menu(chat_id):
     """Show Edit Content menu with all content items as buttons"""
-    # Get all content items (both browse and VIP types)
+    # Get only browse content items (VIP content is managed separately)
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT name, price_stars, description, content_type, created_date FROM content_items ORDER BY created_date DESC')
+    cursor.execute('SELECT name, price_stars, description, content_type, created_date FROM content_items WHERE content_type = ? ORDER BY created_date DESC', ('browse',))
     items = cursor.fetchall()
     conn.close()
     
@@ -2862,7 +2862,9 @@ Add some content first to be able to edit it.
 
 📝 <b>Select content to edit:</b>
 
-Found {len(items)} content item(s). Click on any item below to edit its details:
+Found {len(items)} browse content item(s). Click on any item below to edit its details:
+
+💡 <b>Note:</b> VIP content has its own management section.
 """
     
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -2892,10 +2894,10 @@ Found {len(items)} content item(s). Click on any item below to edit its details:
 
 def show_delete_content_menu(chat_id):
     """Show Delete Content menu with all content items as buttons"""
-    # Get all content items (both browse and VIP types)
+    # Get only browse content items (VIP content is managed separately)
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT name, price_stars, description, content_type, created_date FROM content_items ORDER BY created_date DESC')
+    cursor.execute('SELECT name, price_stars, description, content_type, created_date FROM content_items WHERE content_type = ? ORDER BY created_date DESC', ('browse',))
     items = cursor.fetchall()
     conn.close()
     
@@ -2919,7 +2921,9 @@ You don't have any content to delete yet. Add some content first!
 
 ⚠️ <b>Select content to DELETE:</b>
 
-Found {len(items)} content item(s). Click on any item below to permanently delete it:
+Found {len(items)} browse content item(s). Click on any item below to permanently delete it:
+
+💡 <b>Note:</b> VIP content has its own management section.
 
 <b>⚠️ WARNING:</b> This action cannot be undone!
 """
@@ -3123,7 +3127,7 @@ Choose an action below to manage users and analytics:
     
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton("👥 View Customers", callback_data="owner_list_users"))
-    markup.add(types.InlineKeyboardButton("📊 Analytics Dashboard", callback_data="owner_analytics"))
+    markup.add(types.InlineKeyboardButton("📊 Analytics Dashboard", callback_data="analytics_dashboard"))
     markup.add(types.InlineKeyboardButton("💎 View VIP Members", callback_data="owner_list_vips"))
     markup.add(types.InlineKeyboardButton("🔙 Back to Owner Help", callback_data="owner_help"))
     
