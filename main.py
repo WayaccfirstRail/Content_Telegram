@@ -711,6 +711,161 @@ def handle_vip_description_input(message):
     # Save VIP content
     save_uploaded_content(session)
 
+def handle_vip_settings_input(message):
+    """Handle VIP settings input from interactive buttons"""
+    # Security check: Only owner can modify VIP settings
+    if message.from_user.id != OWNER_ID:
+        bot.send_message(message.chat.id, "❌ Access denied. This is an owner-only feature.")
+        return
+    
+    # Robustness check: Ensure session exists and is valid
+    if OWNER_ID not in upload_sessions:
+        bot.send_message(message.chat.id, "❌ No active VIP settings session. Please start from VIP Settings.")
+        return
+    
+    session = upload_sessions[OWNER_ID]
+    
+    # Validate session type
+    if session.get('type') != 'vip_settings':
+        bot.send_message(message.chat.id, "❌ Invalid session type. Please start from VIP Settings.")
+        return
+        
+    setting = session.get('setting')
+    if not setting:
+        bot.send_message(message.chat.id, "❌ Invalid settings session. Please start from VIP Settings.")
+        return
+    
+    user_input = message.text.strip()
+    
+    try:
+        if setting == 'price':
+            # Handle VIP price input
+            try:
+                price = int(user_input)
+                if price <= 0:
+                    bot.send_message(message.chat.id, "❌ Price must be a positive number! Please try again:")
+                    return
+                
+                # Update VIP price setting
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute('INSERT OR REPLACE INTO vip_settings (key, value) VALUES (?, ?)', 
+                             ('vip_price_stars', str(price)))
+                conn.commit()
+                conn.close()
+                
+                # Clear session
+                del upload_sessions[OWNER_ID]
+                
+                success_text = f"""
+✅ <b>VIP PRICE UPDATED SUCCESSFULLY!</b> ✅
+
+💰 <b>New VIP Price:</b> {price} Stars
+💵 <b>Approximate USD:</b> ${price * 0.01:.2f}
+
+🎉 All new VIP subscriptions will now cost {price} Stars!
+"""
+                
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton("⚙️ VIP Settings", callback_data="vip_settings"))
+                markup.add(types.InlineKeyboardButton("🏠 VIP Dashboard", callback_data="cmd_vip"))
+                
+                bot.send_message(message.chat.id, success_text, reply_markup=markup, parse_mode='HTML')
+                
+            except ValueError:
+                bot.send_message(message.chat.id, "❌ Invalid price! Please enter a number (e.g., 1, 5, 10, 20):")
+                return
+        
+        elif setting == 'duration':
+            # Handle VIP duration input
+            try:
+                duration = int(user_input)
+                if duration <= 0:
+                    bot.send_message(message.chat.id, "❌ Duration must be a positive number! Please try again:")
+                    return
+                
+                # Update VIP duration setting
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute('INSERT OR REPLACE INTO vip_settings (key, value) VALUES (?, ?)', 
+                             ('vip_duration_days', str(duration)))
+                conn.commit()
+                conn.close()
+                
+                # Clear session
+                del upload_sessions[OWNER_ID]
+                
+                # Calculate friendly duration display
+                duration_text = f"{duration} days"
+                if duration == 7:
+                    duration_text = "7 days (1 week)"
+                elif duration == 30:
+                    duration_text = "30 days (1 month)"
+                elif duration == 90:
+                    duration_text = "90 days (3 months)"
+                elif duration == 365:
+                    duration_text = "365 days (1 year)"
+                
+                success_text = f"""
+✅ <b>VIP DURATION UPDATED SUCCESSFULLY!</b> ✅
+
+⏰ <b>New VIP Duration:</b> {duration_text}
+
+🎉 All new VIP subscriptions will now last for {duration} days!
+"""
+                
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton("⚙️ VIP Settings", callback_data="vip_settings"))
+                markup.add(types.InlineKeyboardButton("🏠 VIP Dashboard", callback_data="cmd_vip"))
+                
+                bot.send_message(message.chat.id, success_text, reply_markup=markup, parse_mode='HTML')
+                
+            except ValueError:
+                bot.send_message(message.chat.id, "❌ Invalid duration! Please enter a number of days (e.g., 7, 30, 90):")
+                return
+        
+        elif setting == 'description':
+            # Handle VIP description input
+            if len(user_input) < 5:
+                bot.send_message(message.chat.id, "❌ Description too short! Please enter at least 5 characters:")
+                return
+            
+            # Update VIP description setting
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('INSERT OR REPLACE INTO vip_settings (key, value) VALUES (?, ?)', 
+                         ('vip_description', user_input))
+            conn.commit()
+            conn.close()
+            
+            # Clear session
+            del upload_sessions[OWNER_ID]
+            
+            # Escape HTML special characters to prevent malformed HTML rendering
+            safe_description = user_input.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            success_text = f"""
+✅ <b>VIP DESCRIPTION UPDATED SUCCESSFULLY!</b> ✅
+
+📝 <b>New VIP Description:</b> 
+"{safe_description}"
+
+🎉 This description will now appear when users see the VIP upgrade option!
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("⚙️ VIP Settings", callback_data="vip_settings"))
+            markup.add(types.InlineKeyboardButton("🏠 VIP Dashboard", callback_data="cmd_vip"))
+            
+            bot.send_message(message.chat.id, success_text, reply_markup=markup, parse_mode='HTML')
+    
+    except Exception as e:
+        logger.error(f"Error handling VIP settings input: {e}")
+        # Clear session on error
+        if OWNER_ID in upload_sessions:
+            del upload_sessions[OWNER_ID]
+        bot.send_message(message.chat.id, "❌ An error occurred while updating the setting. Please try again from VIP Settings.")
+
 def complete_vip_upload_with_defaults(session):
     """Complete VIP upload using default values"""
     # Use suggested name if no custom name provided
@@ -1947,6 +2102,12 @@ def handle_upload_flow(message):
             return
         elif session['step'] == 'waiting_for_description':
             handle_vip_description_input(message)
+            return
+    
+    # Handle VIP settings flow  
+    if session.get('type') == 'vip_settings':
+        if session['step'] == 'waiting_for_input':
+            handle_vip_settings_input(message)
             return
     
     # Regular upload flow continues below
