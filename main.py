@@ -218,6 +218,15 @@ def get_user_data(user_id):
 
 def add_or_update_user(user):
     """Add new user or update existing user data"""
+    # Prevent bot from registering itself as a user
+    try:
+        bot_info = bot.get_me()
+        if user.id == bot_info.id:
+            return  # Don't process bot's own messages
+    except Exception as e:
+        logger.warning(f"Could not get bot info: {e}")
+        # Continue processing if we can't get bot info
+    
     conn = sqlite3.connect('content_bot.db')
     cursor = conn.cursor()
     
@@ -2759,7 +2768,7 @@ def owner_help(message):
     help_text = """
 🔧 **OWNER COMMANDS** 🔧
 
-💎 **VIP Management (PRIORITY):**
+💎 **VIP Management:**
 • `/vip` - VIP content management dashboard
 • VIP content is exclusive to VIP subscribers only
 • VIP members get FREE access to all VIP content
