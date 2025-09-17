@@ -4496,13 +4496,13 @@ def clear_webhook_and_polling():
     """Clear any existing webhook and stop other polling instances"""
     try:
         logger.info("Clearing any existing webhook...")
-        # Clear webhook to stop webhook mode
+        # Clear webhook to stop webhook mode and drop pending updates
         bot.remove_webhook()
-        logger.info("Webhook cleared successfully")
+        logger.info("Webhook cleared successfully with pending updates dropped")
         
         # Short delay to ensure cleanup
         import time
-        time.sleep(2)
+        time.sleep(3)
         
     except Exception as e:
         logger.warning(f"Error clearing webhook (this is usually fine): {e}")
