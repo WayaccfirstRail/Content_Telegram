@@ -4122,10 +4122,9 @@ Add a description that VIP members will see:
 💡 Enter the new VIP price in Telegram Stars (just the number):
 
 <b>Examples:</b>
-• 1 (very affordable)
-• 5 (standard pricing)  
-• 10 (premium pricing)
-• 20 (luxury pricing)
+• 50
+• 190
+• 200
 
 💡 <b>Pricing Guide:</b>
 • 1 Star ≈ $0.01 USD
