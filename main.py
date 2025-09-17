@@ -3352,8 +3352,7 @@ def show_vip_content_edit_interface(chat_id, content_name):
     markup.add(types.InlineKeyboardButton("💰 Edit Price", callback_data=f"vip_edit_price_{name}"))
     markup.add(types.InlineKeyboardButton("📝 Edit Description", callback_data=f"vip_edit_desc_{name}"))
     
-    # Add danger zone
-    markup.add(types.InlineKeyboardButton("🗑️ Delete This Content", callback_data=f"vip_delete_{name}"))
+    # Navigation only - deletion is handled from main VIP management
     markup.add(types.InlineKeyboardButton("🔙 Back to VIP Content", callback_data="vip_manage_content"))
     
     bot.send_message(chat_id, edit_text, reply_markup=markup, parse_mode='HTML', disable_web_page_preview=False)
