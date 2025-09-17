@@ -3189,7 +3189,10 @@ def show_vip_settings_interface(chat_id):
 ⏰ <b>Duration:</b> {vip_duration} days  
 📝 <b>Description:</b> {vip_description}
 
-🔧 <b>To modify settings, use these commands:</b>
+🔧 <b>Interactive Settings:</b>
+Use the buttons below for guided setup, or use manual commands:
+
+<b>Manual Commands:</b>
 • <code>/owner_set_vip_price [amount]</code>
 • <code>/owner_set_vip_duration [days]</code>  
 • <code>/owner_set_vip_description [text]</code>
@@ -3200,7 +3203,14 @@ def show_vip_settings_interface(chat_id):
 • 30-day duration balances value and recurring revenue
 """
     
-    markup = types.InlineKeyboardMarkup()
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Add interactive setting buttons
+    markup.add(types.InlineKeyboardButton("💰 Set VIP Price", callback_data="vip_set_price_btn"))
+    markup.add(types.InlineKeyboardButton("⏰ Set Duration", callback_data="vip_set_duration_btn"))  
+    markup.add(types.InlineKeyboardButton("📝 Set Description", callback_data="vip_set_description_btn"))
+    
+    # Navigation
     markup.add(types.InlineKeyboardButton("🔙 Back to VIP Dashboard", callback_data="cmd_vip"))
     
     bot.send_message(chat_id, settings_text, reply_markup=markup, parse_mode='HTML')
