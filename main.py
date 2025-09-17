@@ -3940,6 +3940,115 @@ Add a description that VIP members will see:
             show_vip_settings_interface(call.message.chat.id)
         else:
             bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    # Interactive VIP Settings Handlers
+    elif call.data == "vip_set_price_btn":
+        if call.from_user.id == OWNER_ID:
+            # Start VIP price setting session
+            upload_sessions[OWNER_ID] = {
+                'type': 'vip_settings',
+                'setting': 'price',
+                'step': 'waiting_for_input'
+            }
+            
+            price_text = """
+💰 <b>SET VIP SUBSCRIPTION PRICE</b> 💰
+
+💡 Enter the new VIP price in Telegram Stars (just the number):
+
+<b>Examples:</b>
+• 1 (very affordable)
+• 5 (standard pricing)  
+• 10 (premium pricing)
+• 20 (luxury pricing)
+
+💡 <b>Pricing Guide:</b>
+• 1 Star ≈ $0.01 USD
+• Current default: 399 Stars ≈ $4 USD
+• Higher prices make VIP feel more exclusive
+
+✏️ <b>Just type the number and send:</b>
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="vip_settings"))
+            
+            bot.send_message(call.message.chat.id, price_text, reply_markup=markup, parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    elif call.data == "vip_set_duration_btn":
+        if call.from_user.id == OWNER_ID:
+            # Start VIP duration setting session
+            upload_sessions[OWNER_ID] = {
+                'type': 'vip_settings',
+                'setting': 'duration',
+                'step': 'waiting_for_input'
+            }
+            
+            duration_text = """
+⏰ <b>SET VIP SUBSCRIPTION DURATION</b> ⏰
+
+📅 Enter the VIP duration in days (just the number):
+
+<b>Examples:</b>
+• 7 (1 week)
+• 30 (1 month - recommended)
+• 90 (3 months)
+• 365 (1 year)
+
+💡 <b>Duration Tips:</b>
+• 30 days balances value and recurring revenue
+• Shorter durations = more frequent renewals
+• Longer durations = better customer value
+
+✏️ <b>Just type the number and send:</b>
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="vip_settings"))
+            
+            bot.send_message(call.message.chat.id, duration_text, reply_markup=markup, parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
+    elif call.data == "vip_set_description_btn":
+        if call.from_user.id == OWNER_ID:
+            # Start VIP description setting session
+            upload_sessions[OWNER_ID] = {
+                'type': 'vip_settings',
+                'setting': 'description',
+                'step': 'waiting_for_input'
+            }
+            
+            desc_text = """
+📝 <b>SET VIP SUBSCRIPTION DESCRIPTION</b> 📝
+
+✏️ Enter the new VIP description text:
+
+<b>This description appears when users see the VIP upgrade option.</b>
+
+💡 <b>Examples:</b>
+• "Premium VIP access with exclusive content and direct chat"
+• "Unlock all exclusive content and get personal attention"
+• "VIP membership: exclusive photos, videos, and direct messaging"
+
+🎯 <b>Tips for great descriptions:</b>
+• Highlight exclusive benefits
+• Mention direct access/chat
+• Keep it concise but appealing
+• Focus on what makes VIP special
+
+✏️ <b>Type your description and send:</b>
+"""
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="vip_settings"))
+            
+            bot.send_message(call.message.chat.id, desc_text, reply_markup=markup, parse_mode='HTML')
+        else:
+            bot.send_message(call.message.chat.id, "❌ Access denied. This is an owner-only command.")
+    
     elif call.data == "vip_analytics":
         if call.from_user.id == OWNER_ID:
             show_vip_analytics(call.message.chat.id)
