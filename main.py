@@ -413,7 +413,7 @@ def show_analytics_dashboard(chat_id):
     cursor.execute('SELECT COUNT(*) FROM users')
     total_users = cursor.fetchone()[0]
     
-    cursor.execute('SELECT COUNT(*) FROM users WHERE last_interaction >= ?', (datetime.datetime.now() - datetime.timedelta(days=7)).isoformat())
+    cursor.execute('SELECT COUNT(*) FROM users WHERE last_interaction >= ?', ((datetime.datetime.now() - datetime.timedelta(days=7)).isoformat(),))
     active_users_7d = cursor.fetchone()[0]
     
     cursor.execute('SELECT COUNT(*) FROM users WHERE total_stars_spent > 0')
