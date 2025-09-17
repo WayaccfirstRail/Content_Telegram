@@ -254,7 +254,7 @@ def add_or_update_user(user):
         
         # Send welcome notification to owner
         try:
-            bot.send_message(OWNER_ID, f"🎉 New fan joined!\n👤 {user.first_name} (@{user.username})\n🆔 ID: {user.id}")
+            bot.send_message(OWNER_ID, f"👋 New user started chatting!\n👤 {user.first_name} (@{user.username})\n🆔 ID: {user.id}")
         except:
             pass
     
